@@ -1,5 +1,5 @@
 {
-  "updated_at_utc": "2026-11-02T18:40:10.135177+00:00",
+  "updated_at_utc": "2026-11-02T19:11:59.906161+00:00",
   "model": "Qwen/Qwen3-Omni-30B-A3B-Instruct",
   "slice_name": "v5p-16",
   "chip_type": "v5p",
@@ -8,13 +8,12 @@
   "stage_info": {
     "repo_id": "Qwen/Qwen3-Omni-30B-A3B-Instruct",
     "gcs_uri": "gs://YOUR_GCS_BUCKET/models/Qwen/Qwen3-Omni-30B-A3B-Instruct",
-    "stage_seconds": 89.57,
-    "cached": false
+    "cached": true
   },
   "local_sync_info": {
     "local_dir": "/dev/shm/Qwen3-Omni-30B-A3B-Instruct",
     "downloaded_bytes": 70530594213,
-    "sync_seconds": 85.73
+    "sync_seconds": 85.82
   },
   "checkpoint_manifest": {
     "model_dir": "/dev/shm/Qwen3-Omni-30B-A3B-Instruct",
@@ -97,22 +96,22 @@
   "offload_url": "http://multimodal-cpu-offload-svc.default.svc.cluster.local:8090",
   "offload_health": {
     "status": "ok",
-    "hostname": "multimodal-cpu-offload-svc-79c7f5bb44-6nbrq",
+    "hostname": "multimodal-cpu-offload-svc-576cb9dcb7-x5n8t",
     "cpu_model": "Intel(R) Xeon(R) Platinum 8481C CPU @ 2.70GHz",
     "vcpus": 44,
-    "avg_video_fps": 0.0,
-    "video_jobs": 0,
-    "video_frames": 0,
-    "video_encode_s": 0.0,
-    "image_jobs": 0,
-    "images_encoded": 0,
-    "image_encode_s": 0.0,
+    "avg_video_fps": 247.6,
+    "video_jobs": 6,
+    "video_frames": 446,
+    "video_encode_s": 1.801,
+    "image_jobs": 20,
+    "images_encoded": 20,
+    "image_encode_s": 4.414,
     "audio_jobs": 0,
     "audio_seconds_encoded": 0.0,
     "audio_encode_s": 0.0,
-    "vision_preproc_jobs": 0,
-    "vision_cams_processed": 0,
-    "vision_preproc_s": 0.0
+    "vision_preproc_jobs": 92,
+    "vision_cams_processed": 216,
+    "vision_preproc_s": 0.558
   },
   "cpu_offload_ablation": [
     {
@@ -121,11 +120,11 @@
       "sample_rate_hz": 24000,
       "audio_seconds": 2.0,
       "offload_ok": true,
-      "local_cpu_ms": 0.13,
-      "disagg_cpu_rtt_ms": 5.328,
-      "disagg_server_compute_ms": 0.133,
-      "speedup_x": 0.02,
-      "encoder_host": "multimodal-cpu-offload-svc-79c7f5bb44-6nbrq",
+      "local_cpu_ms": 0.076,
+      "disagg_cpu_rtt_ms": 5.193,
+      "disagg_server_compute_ms": 0.147,
+      "speedup_x": 0.01,
+      "encoder_host": "multimodal-cpu-offload-svc-576cb9dcb7-v96g8",
       "error": null
     },
     {
@@ -134,11 +133,11 @@
       "sample_rate_hz": 24000,
       "audio_seconds": 2.0,
       "offload_ok": true,
-      "local_cpu_ms": 0.126,
-      "disagg_cpu_rtt_ms": 5.991,
-      "disagg_server_compute_ms": 0.139,
+      "local_cpu_ms": 0.092,
+      "disagg_cpu_rtt_ms": 5.972,
+      "disagg_server_compute_ms": 0.145,
       "speedup_x": 0.02,
-      "encoder_host": "multimodal-cpu-offload-svc-79c7f5bb44-6nbrq",
+      "encoder_host": "multimodal-cpu-offload-svc-576cb9dcb7-x5n8t",
       "error": null
     },
     {
@@ -147,11 +146,11 @@
       "sample_rate_hz": 24000,
       "audio_seconds": 2.0,
       "offload_ok": true,
-      "local_cpu_ms": 0.172,
-      "disagg_cpu_rtt_ms": 7.033,
-      "disagg_server_compute_ms": 0.281,
-      "speedup_x": 0.02,
-      "encoder_host": "multimodal-cpu-offload-svc-79c7f5bb44-6nbrq",
+      "local_cpu_ms": 0.159,
+      "disagg_cpu_rtt_ms": 2.65,
+      "disagg_server_compute_ms": 0.315,
+      "speedup_x": 0.06,
+      "encoder_host": "multimodal-cpu-offload-svc-576cb9dcb7-x5n8t",
       "error": null
     },
     {
@@ -160,44 +159,44 @@
       "sample_rate_hz": 24000,
       "audio_seconds": 2.0,
       "offload_ok": true,
-      "local_cpu_ms": 0.45,
-      "disagg_cpu_rtt_ms": 3.909,
-      "disagg_server_compute_ms": 0.551,
-      "speedup_x": 0.12,
-      "encoder_host": "multimodal-cpu-offload-svc-79c7f5bb44-fhklm",
+      "local_cpu_ms": 0.455,
+      "disagg_cpu_rtt_ms": 7.839,
+      "disagg_server_compute_ms": 0.559,
+      "speedup_x": 0.06,
+      "encoder_host": "multimodal-cpu-offload-svc-576cb9dcb7-v96g8",
       "error": null
     },
     {
       "stage": "vision_preproc_640x480_to_256x256",
       "batch_or_frames": 2,
       "offload_ok": true,
-      "local_cpu_ms": 7.19,
-      "disagg_cpu_rtt_ms": 15.88,
-      "disagg_server_compute_ms": 5.34,
-      "speedup_x": 0.45,
-      "encoder_host": "multimodal-cpu-offload-svc-79c7f5bb44-6nbrq",
+      "local_cpu_ms": 7.23,
+      "disagg_cpu_rtt_ms": 8.64,
+      "disagg_server_compute_ms": 5.4,
+      "speedup_x": 0.84,
+      "encoder_host": "multimodal-cpu-offload-svc-576cb9dcb7-v96g8",
       "error": null
     },
     {
       "stage": "vision_preproc_640x480_to_256x256",
       "batch_or_frames": 4,
       "offload_ok": true,
-      "local_cpu_ms": 14.39,
-      "disagg_cpu_rtt_ms": 12.15,
-      "disagg_server_compute_ms": 7.91,
-      "speedup_x": 1.18,
-      "encoder_host": "multimodal-cpu-offload-svc-79c7f5bb44-6nbrq",
+      "local_cpu_ms": 14.28,
+      "disagg_cpu_rtt_ms": 19.53,
+      "disagg_server_compute_ms": 7.1,
+      "speedup_x": 0.73,
+      "encoder_host": "multimodal-cpu-offload-svc-576cb9dcb7-v96g8",
       "error": null
     },
     {
       "stage": "vision_preproc_1280x720_to_448x448",
       "batch_or_frames": 8,
       "offload_ok": true,
-      "local_cpu_ms": 85.68,
-      "disagg_cpu_rtt_ms": 61.27,
-      "disagg_server_compute_ms": 33.47,
-      "speedup_x": 1.4,
-      "encoder_host": "multimodal-cpu-offload-svc-79c7f5bb44-fhklm",
+      "local_cpu_ms": 85.55,
+      "disagg_cpu_rtt_ms": 47.89,
+      "disagg_server_compute_ms": 31.87,
+      "speedup_x": 1.79,
+      "encoder_host": "multimodal-cpu-offload-svc-576cb9dcb7-v96g8",
       "error": null
     }
   ],
@@ -211,9 +210,9 @@
       "dp_per_host": 1,
       "cluster_dp_replicas": 4,
       "context_len": 65536,
-      "startup_sec": 126.02,
+      "startup_sec": 122.02,
       "status": "DIAGNOSTIC_NOTE",
-      "diagnostic_tail": "\n  File \"/usr/local/lib/python3.12/site-packages/vllm/v1/engine/utils.py\", line 1351, in launch_core_engines\n    wait_for_engine_startup(\n  File \"/usr/local/lib/python3.12/site-packages/vllm/v1/engine/utils.py\", line 1431, in wait_for_engine_startup\n    raise RuntimeError(\nRuntimeError: Engine core initialization failed. See root cause above. Failed core proc(s): {}\n/usr/local/lib/python3.12/multiprocessing/resource_tracker.py:279: UserWarning: resource_tracker: There appear to be 2 leaked shared_memory objects to clean up at shutdown\n  warnings.warn('resource_tracker: There appear to be %d '\n"
+      "diagnostic_tail": "\n  File \"/usr/local/lib/python3.12/site-packages/vllm/v1/engine/utils.py\", line 1351, in launch_core_engines\n    wait_for_engine_startup(\n  File \"/usr/local/lib/python3.12/site-packages/vllm/v1/engine/utils.py\", line 1431, in wait_for_engine_startup\n    raise RuntimeError(\nRuntimeError: Engine core initialization failed. See root cause above. Failed core proc(s): {}\n/usr/local/lib/python3.12/multiprocessing/resource_tracker.py:279: UserWarning: resource_tracker: There appear to be 4 leaked shared_memory objects to clean up at shutdown\n  warnings.warn('resource_tracker: There appear to be %d '\n"
     },
     {
       "engine": "vllm-torchtpu-ep",
@@ -224,22 +223,9 @@
       "dp_per_host": 1,
       "cluster_dp_replicas": 4,
       "context_len": 131072,
-      "startup_sec": 102.02,
+      "startup_sec": 106.08,
       "status": "DIAGNOSTIC_NOTE",
       "diagnostic_tail": "\n  File \"/usr/local/lib/python3.12/site-packages/vllm/v1/engine/utils.py\", line 1351, in launch_core_engines\n    wait_for_engine_startup(\n  File \"/usr/local/lib/python3.12/site-packages/vllm/v1/engine/utils.py\", line 1431, in wait_for_engine_startup\n    raise RuntimeError(\nRuntimeError: Engine core initialization failed. See root cause above. Failed core proc(s): {}\n/usr/local/lib/python3.12/multiprocessing/resource_tracker.py:279: UserWarning: resource_tracker: There appear to be 4 leaked shared_memory objects to clean up at shutdown\n  warnings.warn('resource_tracker: There appear to be %d '\n"
-    },
-    {
-      "engine": "vllm-torchtpu-ep",
-      "mode": "Qwen3-Omni-Thinker-64K",
-      "chip_type": "v5p",
-      "precision": "BF16",
-      "tp": 2,
-      "dp_per_host": 2,
-      "cluster_dp_replicas": 8,
-      "context_len": 65536,
-      "startup_sec": 118.03,
-      "status": "DIAGNOSTIC_NOTE",
-      "diagnostic_tail": "s pid=15141) INFO 11-02 18:40:01 [utils.py:628] [shutdown] Process manager: send sigterm to process ApiServer_1\n(MainProcess pid=15141) INFO 11-02 18:40:01 [utils.py:628] [shutdown] Process manager: send sigterm to process EngineCore_DP0\n(MainProcess pid=15141) INFO 11-02 18:40:01 [utils.py:628] [shutdown] Process manager: send sigterm to process VLLM_DP_Coordinator\n/usr/local/lib/python3.12/multiprocessing/resource_tracker.py:279: UserWarning: resource_tracker: There appear to be 4 leaked shared_memory objects to clean up at shutdown\n  warnings.warn('resource_tracker: There appear to be %d '\n"
     }
   ]
 }

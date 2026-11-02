@@ -68,8 +68,28 @@ def _real_meta(rel: str, default: str = "") -> str:
         return default
 
 
+def _patch_torchtpu_export_multidevice() -> None:
+    """Fixes torch_tpu 0.2.0 export.py bug where current_accelerator().index is None on tpu:1..N-1."""
+    exp_path = Path("/usr/local/lib/python3.12/site-packages/torch_tpu/_internal/export/export.py")
+    if not exp_path.exists():
+        return
+    try:
+        src = exp_path.read_text()
+        buggy = "default_device_index = device.index or 0"
+        fixed = (
+            "default_device_index = ("
+            "torch.accelerator.current_device_index() if device.index is None else device.index"
+            ") or 0"
+        )
+        if buggy in src and fixed not in src:
+            exp_path.write_text(src.replace(buggy, fixed))
+    except Exception:
+        pass
+
+
 def start_single_host_metadata_env(chip_type: str, port: int = 18080) -> dict[str, str]:
     """Compiles /dev/shm/metadata_hook.so, starts local proxy on `port` (in parent without LD_PRELOAD), returns child env."""
+    _patch_torchtpu_export_multidevice()
     shm = Path("/dev/shm")
     shm.mkdir(parents=True, exist_ok=True)
     c_path = shm / "metadata_hook.c"
@@ -101,6 +121,7 @@ def start_single_host_metadata_env(chip_type: str, port: int = 18080) -> dict[st
                 path = urllib.parse.urlparse(self.path).path
                 tpu_kv = {
                     "TPU_WORKER_ID": "0",
+                    "TPU_WORKER_HOSTNAMES": "localhost",
                     "ALT": "false",
                     "CHIPS_PER_HOST_BOUNDS": "2,2,1",
                     "CONSUMER_PROJECT_ID": "tpu-bench-project",
@@ -123,7 +144,7 @@ def start_single_host_metadata_env(chip_type: str, port: int = 18080) -> dict[st
                     lines.append("TPU_RUNTIME_METRICS_PORTS: '8431,8432,8433,8434'")
                     body = ("\n".join(lines) + "\n").encode()
                 elif path.endswith("/computeMetadata/v1/instance/attributes/worker-network-endpoints"):
-                    body = host_short.encode()
+                    body = b"localhost:0:127.0.0.1"
                 elif path.endswith("/computeMetadata/v1/instance/attributes/accelerator-type"):
                     body = accel.encode()
                 elif path.endswith("/computeMetadata/v1/instance/attributes/agent-worker-number"):
@@ -164,6 +185,8 @@ def start_single_host_metadata_env(chip_type: str, port: int = 18080) -> dict[st
 
     child_env = os.environ.copy()
     for strip_k in (
+        "JOB_COMPLETION_INDEX",
+        "BATCH_JOB_INDEX",
         "TPU_WORKER_ID",
         "TPU_WORKER_HOSTNAMES",
         "TPU_PROCESS_ADDRESSES",
@@ -172,13 +195,25 @@ def start_single_host_metadata_env(chip_type: str, port: int = 18080) -> dict[st
         "CLOUD_TPU_TASK_ID",
         "MEGASCALE_NUM_SLICES",
         "MEGASCALE_SLICE_ID",
+        "TORCH_TPU_SLICEBUILDER_ADDRESSES",
+        "TORCH_TPU_TOPOLOGY",
+        "NNODES",
+        "NODE_RANK",
+        "MASTER_ADDR",
+        "MASTER_PORT",
     ):
         child_env.pop(strip_k, None)
+    tcmalloc = "/usr/lib/x86_64-linux-gnu/libtcmalloc_minimal.so.4"
+    preload_libs = [str(so_path)]
+    if Path(tcmalloc).exists():
+        preload_libs.insert(0, tcmalloc)
     child_env.update(
         {
-            "LD_PRELOAD": str(so_path),
+            "LD_PRELOAD": ":".join(preload_libs),
             "MOCK_METADATA_PORT": str(port),
             "PJRT_DEVICE": "TPU",
+            "TPU_WORKER_ID": "0",
+            "TPU_WORKER_HOSTNAMES": "localhost",
             "TPU_CHIPS_PER_HOST_BOUNDS": "2,2,1",
             "TPU_HOST_BOUNDS": "1,1,1",
         }

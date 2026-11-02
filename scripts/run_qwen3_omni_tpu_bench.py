@@ -259,33 +259,6 @@ def run_vllm_qwen3_omni_http_sweep(
     engine_name = "vllm-torchtpu-omni" if use_omni_flag else "vllm-torchtpu-ep"
     mode_tag = f"Qwen3-Omni-{'FullOmni' if use_omni_flag else 'Thinker'}-{max_len // 1024}K"
 
-    if use_omni_flag:
-        help_res = subprocess.run(
-            ["vllm", "serve", "--help"],
-            env=child_env,
-            capture_output=True,
-            text=True,
-            timeout=45,
-        )
-        help_txt = (help_res.stdout or "") + "\n" + (help_res.stderr or "")
-        if "--omni" not in help_txt:
-            log(rank, "CLI `vllm serve --help` does not advertise `--omni`; recording factual probe status.")
-            rows.append(
-                {
-                    "engine": engine_name,
-                    "mode": mode_tag,
-                    "chip_type": chip_type,
-                    "precision": "BF16",
-                    "tp": tp_size,
-                    "dp_per_host": dp_host,
-                    "cluster_dp_replicas": cluster_dp,
-                    "context_len": max_len,
-                    "status": "UNSUPPORTED_CLI_FLAG",
-                    "diagnostic_tail": "`--omni` flag not present in installed `vllm serve` CLI.",
-                }
-            )
-            return rows
-
     port = 18300 + tp_size * 2 + (20 if max_len > 65536 else 0) + (50 if use_omni_flag else 0)
     log_path = Path(f"/dev/shm/vllm_qwen3_omni_{'omni_' if use_omni_flag else ''}tp{tp_size}_dp{dp_host}_{max_len}.log")
 
@@ -294,7 +267,6 @@ def run_vllm_qwen3_omni_http_sweep(
         {
             "PJRT_DEVICE": "TPU",
             "VLLM_TARGET_DEVICE": "tpu",
-            "VLLM_PLUGINS": "torchtpu",
             "VLLM_WORKER_MULTIPROC_METHOD": "spawn",
             "VLLM_NO_USAGE_STATS": "1",
             "VLLM_ALLOW_LONG_MAX_MODEL_LEN": "1",
@@ -307,25 +279,33 @@ def run_vllm_qwen3_omni_http_sweep(
         }
     )
     gpu_mem_util = "0.90" if tp_size == 2 else "0.88"
-    cmd = [
-        "vllm",
-        "serve",
-        model_path,
-        "--host=127.0.0.1",
-        f"--port={port}",
-        "--attention-backend=CUSTOM",
-        f"--tensor-parallel-size={tp_size}",
-        f"--data-parallel-size={dp_host}",
-        "--enable-expert-parallel",
-        f"--max-model-len={max_len}",
-        "--max-num-seqs=32",
-        "--max-num-batched-tokens=8192",
-        f"--gpu-memory-utilization={gpu_mem_util}",
-        "--async-scheduling",
-        "--trust-remote-code",
-    ]
     if use_omni_flag:
-        cmd.append("--omni")
+        cmd = [
+            "vllm",
+            "serve",
+            model_path,
+            "--omni",
+            "--host=127.0.0.1",
+            f"--port={port}",
+            "--trust-remote-code",
+        ]
+    else:
+        cmd = [
+            "vllm",
+            "serve",
+            model_path,
+            "--host=127.0.0.1",
+            f"--port={port}",
+            f"--tensor-parallel-size={tp_size}",
+            f"--data-parallel-size={dp_host}",
+            "--enable-expert-parallel",
+            f"--max-model-len={max_len}",
+            "--max-num-seqs=32",
+            "--max-num-batched-tokens=8192",
+            f"--gpu-memory-utilization={gpu_mem_util}",
+            "--async-scheduling",
+            "--trust-remote-code",
+        ]
     if model_path.startswith("gs://"):
         cmd.extend(["--load-format=runai_streamer", "--safetensors-load-strategy=prefetch"])
     if rope_overrides:
@@ -511,12 +491,14 @@ def run_child_qwen3_omni_worker(
     import torch
     import torch.nn as nn
     import torch.nn.functional as F
+    from tpu_single_host_setup import _patch_torchtpu_export_multidevice
+    _patch_torchtpu_export_multidevice()
     import torch_tpu  # noqa: F401
     from safetensors import safe_open
 
-    n_devs = torch.tpu.device_count()
+    n_devs = torch.accelerator.device_count()
     if n_devs < 1:
-        raise RuntimeError("torch.tpu.device_count() returned 0 inside --worker-mode")
+        raise RuntimeError("torch.accelerator.device_count() returned 0 inside --worker-mode")
     devices = [torch.device(f"tpu:{i}") for i in range(n_devs)]
     dp_per_host = max(1, n_devs // tp_size)
 
@@ -538,7 +520,7 @@ def run_child_qwen3_omni_worker(
                 r = torch._scaled_mm(ta, tb_storage.t(), scale_a=sa, scale_b=sb, out_dtype=torch.bfloat16)
                 out_t = r[0] if isinstance(r, tuple) else r
                 _ = out_t.sum().item()
-                torch.tpu.synchronize()
+                torch.accelerator.synchronize()
                 scale_shape = cand_shape
                 scaled_mm_eager_ok = True
 
@@ -550,7 +532,7 @@ def run_child_qwen3_omni_worker(
                 c_probe = torch.compile(_smm_probe, dynamic=False)
                 xb = torch.ones((128, 128), device=dev0, dtype=torch.bfloat16)
                 _ = c_probe(xb, tb_storage, sa, sb)
-                torch.tpu.synchronize()
+                torch.accelerator.synchronize()
                 scaled_mm_compile_ok = True
                 break
             except Exception:
@@ -585,7 +567,7 @@ def run_child_qwen3_omni_worker(
                             per_slot_bytes[slot] += td.numel() * td.element_size()
                 if per_slot_bytes[slot] >= target_per_core:
                     break
-    torch.tpu.synchronize()
+    torch.accelerator.synchronize()
     load_sec = time.perf_counter() - t_l0
 
     # Qwen3-Omni-30B-A3B-Instruct architectural dimensions:
@@ -891,7 +873,7 @@ def run_child_qwen3_omni_worker(
                             _ = _run_thinker_layer(i, xs[i])
                             _ = fn_dec[i](txs[i], kcs[i], vcs[i])
                             _ = fn_talk[i](xts[i], xws[i])
-                        torch.tpu.synchronize()
+                        torch.accelerator.synchronize()
 
                         # 1) Measure 48-layer 128E top-6 Thinker Prefill concurrently across all local DP groups
                         sample_layers = 6 if ctx_len <= 65536 else 4
@@ -904,7 +886,7 @@ def run_child_qwen3_omni_worker(
                                 return h
 
                             list(pool.map(_pre_dp, range(dp_per_host)))
-                        torch.tpu.synchronize()
+                        torch.accelerator.synchronize()
                         ttft_s = (time.perf_counter() - t0) * (n_think_layers / float(sample_layers))
 
                         # 2) Measure 48-layer Thinker Decode TPOT concurrently across all local DP groups
@@ -918,7 +900,7 @@ def run_child_qwen3_omni_worker(
                                 return ht
 
                             list(pool.map(_dec_dp, range(dp_per_host)))
-                        torch.tpu.synchronize()
+                        torch.accelerator.synchronize()
                         tpot_ms = ((time.perf_counter() - t_dec0) / float(dec_iters)) * n_think_layers * 1000.0
 
                         # 3) Measure 20L 128E Talker + 5L 16-RVQ CodePredictor + 8L Code2Wav (2.0s @ 24 kHz chunk)
@@ -932,7 +914,7 @@ def run_child_qwen3_omni_worker(
                                 return acc
 
                             list(pool.map(_talk_dp, range(dp_per_host)))
-                        torch.tpu.synchronize()
+                        torch.accelerator.synchronize()
                         chunk_2s_lat_s = (time.perf_counter() - t1) / float(talk_iters)
 
                         # 4) Multimodal CPU Offload A/B metrics (`/encode_wav` + `/preprocess_vision`)
@@ -999,7 +981,7 @@ def run_child_qwen3_omni_worker(
                             row["compile_note"] = compile_note
                         all_rows.append(row)
                         del xs, txs, kcs, vcs, xts, xws
-                        torch.tpu.synchronize()
+                        torch.accelerator.synchronize()
                 except Exception as exc:
                     all_rows.append(
                         {
@@ -1015,7 +997,7 @@ def run_child_qwen3_omni_worker(
                     )
 
         del replicas
-        torch.tpu.synchronize()
+        torch.accelerator.synchronize()
 
     out_json.write_text(json.dumps(all_rows, indent=2))
 
