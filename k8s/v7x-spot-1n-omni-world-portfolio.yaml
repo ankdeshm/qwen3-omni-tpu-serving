@@ -25,17 +25,17 @@ spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
       nodeSelector:
-        cloud.google.com/gke-nodepool: tpu-v7x-4-spot-pool
-        cloud.google.com/gke-tpu-accelerator: tpu7x
-        cloud.google.com/gke-tpu-topology: 2x2x1
+        cloud.google.com/tpu-worker-node: tpu-v7x-4-spot-pool
+        cloud.google.com/tpu-worker-node: tpu7x
+        cloud.google.com/tpu-worker-node: 2x2x1
       tolerations:
       - key: "google.com/tpu"
         operator: "Exists"
         effect: "NoSchedule"
-      - key: "cloud.google.com/gke-spot"
+      - key: "cloud.google.com/tpu-worker-node"
         operator: "Exists"
         effect: "NoSchedule"
-      - key: "cloud.google.com/gke-queued"
+      - key: "cloud.google.com/tpu-worker-node"
         operator: "Exists"
         effect: "NoSchedule"
       containers:

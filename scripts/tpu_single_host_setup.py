@@ -69,20 +69,32 @@ def _real_meta(rel: str, default: str = "") -> str:
 
 
 def _patch_torchtpu_export_multidevice() -> None:
-    """Fixes torch_tpu 0.2.0 export.py bug where current_accelerator().index is None on tpu:1..N-1."""
+    """Fixes torch_tpu 0.2.0 export.py bug where current_accelerator().index is None or C++ current_device mismatches on tpu:0..N-1."""
     exp_path = Path("/usr/local/lib/python3.12/site-packages/torch_tpu/_internal/export/export.py")
     if not exp_path.exists():
         return
     try:
         src = exp_path.read_text()
-        buggy = "default_device_index = device.index or 0"
-        fixed = (
-            "default_device_index = ("
-            "torch.accelerator.current_device_index() if device.index is None else device.index"
-            ") or 0"
+        target_line = "      default_generator = device_module.default_generators[default_device_index]"
+        sync_snippet = (
+            "      if argument_tensors and argument_tensors[0].device.index is not None:\n"
+            "        default_device_index = argument_tensors[0].device.index\n"
+            "      else:\n"
+            "        default_device_index = (torch.accelerator.current_device_index() if device.index is None else device.index) or 0\n"
+            "      try:\n"
+            "        device_module.set_device(default_device_index)\n"
+            "        torch.accelerator.set_device_index(default_device_index)\n"
+            "      except Exception:\n"
+            "        pass\n"
+            "      default_generator = device_module.default_generators[default_device_index]"
         )
-        if buggy in src and fixed not in src:
-            exp_path.write_text(src.replace(buggy, fixed))
+        if "device_module.set_device(default_device_index)" not in src and target_line in src:
+            src = src.replace("      default_device_index = device.index or 0\n", "")
+            src = src.replace(
+                "      default_device_index = (torch.accelerator.current_device_index() if device.index is None else device.index) or 0\n",
+                "",
+            )
+            exp_path.write_text(src.replace(target_line, sync_snippet, 1))
     except Exception:
         pass
 

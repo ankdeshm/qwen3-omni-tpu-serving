@@ -1,0 +1,99 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: v7x8-pool-a-omni-world-portfolio
+  namespace: default
+  labels:
+    app: v7x8-pool-a-omni-world-portfolio
+    portfolio: omni-world-v7x-flex
+spec:
+  completions: 2
+  parallelism: 2
+  completionMode: Indexed
+  backoffLimit: 6
+  template:
+    metadata:
+      annotations:
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
+      labels:
+        app: v7x8-pool-a-omni-world-portfolio
+        portfolio: omni-world-v7x-flex
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      restartPolicy: OnFailure
+      serviceAccountName: default
+      nodeSelector:
+        cloud.google.com/tpu-worker-node: tpu-v7x-cluster-8-pool-a
+        cloud.google.com/tpu-worker-node: tpu7x
+        cloud.google.com/tpu-worker-node: 2x2x2
+      tolerations:
+      - key: google.com/tpu
+        operator: Exists
+        effect: NoSchedule
+      - key: cloud.google.com/tpu-worker-node
+        operator: Exists
+        effect: NoSchedule
+      - key: cloud.google.com/tpu-worker-node
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: omni-v7x-bench
+        image: us-central1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/vllm/vllm-torchtpu-omni:v0.32.0
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          privileged: true
+        env:
+        - name: PJRT_DEVICE
+          value: "TPU"
+        - name: MULTIMODAL_CPU_OFFLOAD_URL
+          value: "http://multimodal-cpu-offload-svc.default.svc.cluster.local:8090"
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: hf-token
+              key: HF_TOKEN
+              optional: true
+        command:
+        - bash
+        - -lc
+        - |
+          set -euo pipefail
+          ulimit -c 0 || true
+          mount -o remount,size=850G /dev/shm || true
+          rm -rf /dev/shm/GR00T* /dev/shm/Qwen* /dev/shm/Cosmos* /dev/shm/Hunyuan* /dev/shm/LTX* /dev/shm/Wan* /dev/shm/hf_cache /workspace/core* || true
+          mkdir -p /tmp/omni_bench
+          TOK=$(curl -sS -H "Metadata-Flavor: Google" "http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token" | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+          for f in gcs_stager.py tpu_single_host_setup.py cpu_offload_client.py run_gr00t_vla_tpu_bench.py run_qwen_image_tpu_bench.py run_qwen3_omni_tpu_bench.py run_cosmos3_super_tpu_bench.py run_hunyuan_image3_tpu_bench.py; do
+            curl -fsSL -H "Authorization: Bearer ${TOK}" \
+              "https://storage.googleapis.com/storage/v1/b/YOUR_GCS_BUCKET/o/omni-world-portfolio%2Fscripts%2F${f}?alt=media" \
+              -o "/tmp/omni_bench/${f}"
+          done
+          # Utilize BOTH 4-chip (8-TensorCore) hosts in parallel at 100% TPU occupancy!
+          if [ "${JOB_COMPLETION_INDEX:-0}" = "0" ]; then
+            echo "=== [v7x-8 Host 0] Running GR00T-N1.7-3B + Qwen3-Omni + Qwen-Image / Qwen-Image-2.1 ==="
+            for s in run_gr00t_vla_tpu_bench.py run_qwen3_omni_tpu_bench.py run_qwen_image_tpu_bench.py; do
+              echo "=== [v7x-8 Host 0] Starting ${s} ==="
+              JOB_COMPLETION_INDEX=0 python3 -u "/tmp/omni_bench/${s}" --chip-type=v7x --slice-name=v7x-8 --num-hosts=2 --cores-per-host=8 --use-shm || true
+            done
+          else
+            echo "=== [v7x-8 Host 1] Running Cosmos3-Super + HunyuanImage-3.0 ==="
+            for s in run_cosmos3_super_tpu_bench.py run_hunyuan_image3_tpu_bench.py; do
+              echo "=== [v7x-8 Host 1] Starting ${s} ==="
+              JOB_COMPLETION_INDEX=0 python3 -u "/tmp/omni_bench/${s}" --chip-type=v7x --slice-name=v7x-8 --num-hosts=2 --cores-per-host=8 --use-shm || true
+            done
+          fi
+        resources:
+          requests:
+            google.com/tpu: "4"
+            memory: "700Gi"
+          limits:
+            google.com/tpu: "4"
+        volumeMounts:
+        - name: dshm
+          mountPath: /dev/shm
+      volumes:
+      - name: dshm
+        hostPath:
+          path: /dev/shm
+          type: Directory

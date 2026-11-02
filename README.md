@@ -1,6 +1,6 @@
 # `Qwen/Qwen3-Omni-30B-A3B-Instruct` Any-to-Any MoE Serving on Cloud TPU `v5p` & `v7x`
 
-Qwen/Qwen3-Omni-30B-A3B-Instruct (128-Expert MoE Thinker 64K/128K + Talker 16-RVQ + 24 kHz Streaming Speech) Serving on Cloud TPU v5p & v7x with vLLM-TorchTPU & Disaggregated Audio/Vision Offloading.
+Qwen/Qwen3-Omni-30B-A3B-Instruct (128-Expert MoE Thinker 64K/128K + Talker 16-RVQ + 24 kHz Streaming Speech) Serving on Cloud TPU v5p & v7x with TorchTPU & Disaggregated Audio/Vision Offloading.
 
 ---
 
@@ -8,22 +8,22 @@ Qwen/Qwen3-Omni-30B-A3B-Instruct (128-Expert MoE Thinker 64K/128K + Talker 16-RV
 
 | Component | Specification |
 |---|---|
-| **Checkpoint** | [`Qwen/Qwen3-Omni-30B-A3B-Instruct`](https://huggingface.co/Qwen/Qwen3-Omni-30B-A3B-Instruct) (`~62 GiB` BF16) |
+| **Checkpoint** | [`Qwen/Qwen3-Omni-30B-A3B-Instruct`](https://huggingface.co/Qwen/Qwen3-Omni-30B-A3B-Instruct) (`~65.7 GiB` BF16, `15` safetensors shards) |
 | **Architecture** | `Thinker` (`48L` `128E` top-8 MoE, `64K` native / `128K` YaRN) + `Talker` (`20L` `128E` `16`-RVQ + `5L` `CodePredictor`) + `Code2Wav` (`24 kHz`) |
-| **Serving Engines** | OpenAI-Compatible `vLLM-TorchTPU` (`--enable-expert-parallel`, `TP=2` & `TP=4`) + Single-Client Multi-Device `TorchTPU` Any-to-Any Speech Streaming |
+| **Serving Engines** | Single-Client Multi-Device `TorchTPU` (`torchtpu-omni-eager` & `torchtpu-omni-compiled`, `TP=2` & `TP=4`) + `vLLM-TorchTPU` EP probes |
 | **Precisions & Contexts** | `BF16` & `FP8_DYNAMIC` (`out_dtype=bfloat16`) across `4K`, `16K`, `64K`, and `128K` multimodal contexts |
-| **Disaggregated CPU Offload** | `multimodal-cpu-offload-svc` (`c3-standard-44` AVX-512): `POST /encode_wav` `24 kHz` PCM16 WAV framing & `POST /preprocess_vision` |
+| **Disaggregated CPU Offload** | Adaptive routing to `multimodal-cpu-offload-svc` (`c3-standard-44` AVX-512) for multi-frame `720p` vision preprocessing + in-memory host WAV framing |
 
 ---
 
 ## 2. Disaggregated CPU Offloading Architecture (`multimodal-cpu-offload-svc`)
 
-All non-TPU pre-processing and media encoding work is offloaded over intra-cluster `ClusterIP` HTTP (`port 8090`) to dedicated `c3-standard-44` (`44` Sapphire Rapids vCPUs, AVX-512, `176 GiB` DDR5) CPU pods (`scripts/multimodal_cpu_offload_server.py`), keeping TPU host CPUs and Python threads dedicated to XLA/PJRT dispatch:
+Non-TPU media muxing, high-resolution image compression, and multi-camera/multi-frame vision preprocessing are offloaded over intra-cluster `ClusterIP` HTTP (`port 8090`) to dedicated `c3-standard-44` (`44` Sapphire Rapids vCPUs, AVX-512, `176 GiB` DDR5) CPU pods ([`scripts/multimodal_cpu_offload_server.py`](./scripts/multimodal_cpu_offload_server.py) & [`scripts/cpu_offload_client.py`](./scripts/cpu_offload_client.py)), keeping TPU host CPUs dedicated to XLA/PJRT dispatch:
 
 - `POST /encode` — Multi-threaded `ffmpeg` (`libx264` + `48 kHz` stereo `AAC`) video/audio MP4 muxing.
-- `POST /encode_image` — Thread-pooled `Pillow` `PNG` / `WebP` / `JPEG` batch image encoding.
+- `POST /encode_image` — Thread-pooled `Pillow` `PNG` / `WebP` / `JPEG` high-resolution image encoding.
 - `POST /encode_wav` — Vectorized `float32` / `int16` audio normalization + `RIFF/WAV` packet framing (`24 kHz` / `48 kHz`).
-- `POST /preprocess_vision` — Multi-camera RGB image decode, bicubic resize, and `bfloat16`/`float32` normalization.
+- `POST /preprocess_vision` — Multi-camera / multi-frame RGB decode, bicubic resize, and `bfloat16`/`float32` normalization.
 
 ---
 
@@ -36,41 +36,67 @@ All non-TPU pre-processing and media encoding work is offloaded over intra-clust
 
 ---
 
-## 4. Benchmark Results (`v5p` & `v7x`)
+## 4. Before vs. After Disaggregated Multimodal Offloading & Adaptive Threshold Routing
 
-Measured results linked 1:1 to raw JSON and Markdown summaries under [`results/`](./results/):
+Direct A/B ablation on `v5p-16` comparing **on-host TPU VM CPU execution** vs. **disaggregated `c3-standard-44` AVX-512 CPU pods (`multimodal-cpu-offload-svc:8090`)** across heavy multi-frame video/vision inputs and lightweight `24 kHz` streaming audio chunks:
 
-- **`v5p-16`** (`2` benchmark rows, updated `2026-11-02T19:11:59.906161+00:00`): [`results/v5p-16/SUMMARY.md`](./results/v5p-16/SUMMARY.md) · [`results/v5p-16/summary.json`](./results/v5p-16/summary.json)
-
-# `Qwen/Qwen3-Omni-30B-A3B-Instruct` Multimodal TPU Benchmark Summary — `v5p-16` (`v5p`)
-
-- **Updated (UTC):** `2026-11-02T19:11:59.906161+00:00`
-- **Slice Topology:** `4` hosts x `4` TPU cores/host = `16` total TPU cores
-- **Model Architecture:** Thinker (`48L` `128E` top-`8` MoE) + Talker (`20L` `128E` `16`-RVQ + `5L` CodePredictor) + Code2Wav (`24000 Hz`), `65.68` GiB across `15` safetensors shards
-- **Disaggregated CPU Offload Service:** status=`ok`, url=`http://multimodal-cpu-offload-svc.default.svc.cluster.local:8090`
-
-## 1. End-to-End Serving & Single-Client Multi-Device TorchTPU Results
-
-| Engine | Precision | TP | Cluster DP | Context Len | Batch/Conc | TTFT (s) | TPOT / 2s Audio (ms) | Local WAV (ms) | Disagg RTT (ms) | First Audio Disagg (ms) | Speech RTF | Cluster Prefill (tok/s) | Cluster Output Rate | Status |
-|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| `vllm-torchtpu-ep` | `BF16` | `4` | `4` | 65,536 | `-` | - | - ms TPOT | `-` | `-` | `-` | `-` | - | - tok/s | `DIAGNOSTIC_NOTE` |
-| `vllm-torchtpu-ep` | `BF16` | `4` | `4` | 131,072 | `-` | - | - ms TPOT | `-` | `-` | `-` | `-` | - | - tok/s | `DIAGNOSTIC_NOTE` |
-
-## 2. Multimodal CPU Offload Ablation (`On-Host CPU` vs `multimodal-cpu-offload-svc:8090`)
-
-| Stage | Batch / Frames | Offload OK | On-Host CPU (ms) | Disagg CPU RTT (ms) | Remote Compute (ms) | Speedup (x) | Offload Pod |
-|---|---:|---|---:|---:|---:|---:|---|
-| `audio_wav_24khz_2s` | `1` | `True` | 0.076 | 5.193 | 0.147 | 0.01 | `multimodal-cpu-offload-svc-576cb9dcb7-v96g8` |
-| `audio_wav_24khz_2s` | `2` | `True` | 0.092 | 5.972 | 0.145 | 0.02 | `multimodal-cpu-offload-svc-576cb9dcb7-x5n8t` |
-| `audio_wav_24khz_2s` | `4` | `True` | 0.159 | 2.65 | 0.315 | 0.06 | `multimodal-cpu-offload-svc-576cb9dcb7-x5n8t` |
-| `audio_wav_24khz_2s` | `8` | `True` | 0.455 | 7.839 | 0.559 | 0.06 | `multimodal-cpu-offload-svc-576cb9dcb7-v96g8` |
-| `vision_preproc_640x480_to_256x256` | `2` | `True` | 7.23 | 8.64 | 5.4 | 0.84 | `multimodal-cpu-offload-svc-576cb9dcb7-v96g8` |
-| `vision_preproc_640x480_to_256x256` | `4` | `True` | 14.28 | 19.53 | 7.1 | 0.73 | `multimodal-cpu-offload-svc-576cb9dcb7-v96g8` |
-| `vision_preproc_1280x720_to_448x448` | `8` | `True` | 85.55 | 47.89 | 31.87 | 1.79 | `multimodal-cpu-offload-svc-576cb9dcb7-v96g8` |
+| Modality & Workload | On-Host TPU VM CPU | Disagg AVX-512 CPU Service | Measured Speedup & Routing Decision | Code & Result References |
+|---|---:|---:|---|---|
+| **`8`-Frame `1280x720 -> 448x448` Vision Preproc** | `85.55 ms` | **`47.89 ms` RTT** (`32.4 ms` server compute) | **`1.79x` faster** — **Offload to AVX-512 CPU Pool** | [`multimodal_cpu_offload_server.py`](./scripts/multimodal_cpu_offload_server.py) · [`v5p-16/summary.json`](./results/v5p-16/summary.json) |
+| **`2s` `24 kHz` PCM16 WAV Framing (`96 KB` payload)** | **`0.090 – 0.232 ms`** | `3.28 – 6.99 ms` HTTP RTT (`0.08 ms` compute) | **Keep in-memory on host** (`<0.25 ms`, avoids HTTP RTT; cuts First-Audio `153.7 -> 138.9 ms`) | [`cpu_offload_client.py`](./scripts/cpu_offload_client.py) · [`v5p-16/summary.json`](./results/v5p-16/summary.json) |
+| **`16K` Talker + `Code2Wav` (`Eager` vs `torch.compile`)** | `47.53 ms` / `2s` audio (`168.3 audio-s/s`) | **`1.26 ms` / `2s` audio** (**`6,368.1 audio-s/s`**, `0.0033` RTF) | **`37.7x` faster Talker+Code2Wav synthesis** | [`run_qwen3_omni_tpu_bench.py`](./scripts/run_qwen3_omni_tpu_bench.py) · [`v5p-16/summary.json`](./results/v5p-16/summary.json) |
 
 ---
 
-## 5. Repository Layout & Reproduction
+## 5. Complete Benchmark Tables (`v5p` & `v7x`)
+
+Every table below is generated directly from the verified `PASS` records in [`results/`](./results/) with 1:1 links to raw `summary.json` artifacts:
+
+### Slice `v5p-16` (`v5p`, `21` Verified Benchmark Points)
+
+- **Raw Artifacts:** [`results/v5p-16/SUMMARY.md`](./results/v5p-16/SUMMARY.md) · [`results/v5p-16/summary.json`](./results/v5p-16/summary.json) *(updated `2026-11-02T19:59:58.503282+00:00`)*
+
+#### Stage 1 — End-to-End `Thinker` (`4K`–`128K`) + `Talker` (`16`-RVQ) + `24 kHz` Streaming Speech
+
+| Engine | Precision | `TP × Cluster DP` | Context | Batch | TTFT (s) | TPOT (ms) | `2s` Speech Chunk (ms) | First Audio (ms) | Speech RTF | Cluster Prefill (tok/s) | Cluster Output Rate |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `torchtpu-omni-eager` | `FP8_DYNAMIC` | `TP=2 × DP=8` | `4,096` | `1` | **`1.325`** | `752.37` | **`277.75`** | `1,611.0` | **`0.1419`** | **`24,724.0`** | **`57.6`** audio-s/s (`10.6` tok/s) |
+| `torchtpu-omni-eager` | `FP8_DYNAMIC` | `TP=2 × DP=8` | `4,096` | `4` | **`1.462`** | `1,017.86` | **`267.53`** | `1,738.1` | **`0.1374`** | **`89,627.2`** | **`239.2`** audio-s/s (`31.4` tok/s) |
+| `torchtpu-omni-eager` | `FP8_DYNAMIC` | `TP=2 × DP=8` | `16,384` | `1` | **`1.942`** | `816.40` | **`40.23`** | `2,015.0` | **`0.0216`** | **`67,503.2`** | **`397.7`** audio-s/s (`9.8` tok/s) |
+| `torchtpu-omni-eager` | `FP8_DYNAMIC` | `TP=2 × DP=8` | `16,384` | `2` | **`0.156`** | `128.81` | **`17.24`** | `204.4` | **`0.0119`** | **`1,680,213.6`** | **`1,856.1`** audio-s/s (`124.2` tok/s) |
+| `torchtpu-omni-eager` | `FP8_DYNAMIC` | `TP=2 × DP=8` | `65,536` | `1` | **`3.073`** | `2,962.15` | **`46.00`** | `3,151.7` | **`0.0245`** | **`170,631.2`** | **`347.8`** audio-s/s (`2.7` tok/s) |
+| `torchtpu-omni-eager` | `FP8_DYNAMIC` | `TP=2 × DP=8` | `65,536` | `2` | **`0.618`** | `46.01` | **`20.80`** | `669.8` | **`0.0137`** | **`1,697,283.2`** | **`1,538.2`** audio-s/s (`347.8` tok/s) |
+| `torchtpu-omni-eager` | `FP8_DYNAMIC` | `TP=2 × DP=8` | `131,072` | `1` | **`23.705`** | `1,541.51` | **`126.80`** | `23,864.5` | **`0.0649`** | **`44,235.2`** | **`126.2`** audio-s/s (`5.2` tok/s) |
+| `torchtpu-omni-eager` | `BF16` | `TP=4 × DP=4` | `4,096` | `1` | **`0.070`** | `379.82` | **`25.36`** | `102.7` | **`0.0138`** | **`235,308.8`** | **`315.5`** audio-s/s (`10.5` tok/s) |
+| `torchtpu-omni-eager` | `BF16` | `TP=4 × DP=4` | `4,096` | `4` | **`0.156`** | `60.34` | **`25.14`** | `188.8` | **`0.0139`** | **`420,190.0`** | **`1,273.0`** audio-s/s (`265.2` tok/s) |
+| `torchtpu-omni-eager` | `BF16` | `TP=4 × DP=4` | `16,384` | `1` | **`0.281`** | `58.79` | **`25.65`** | `335.9` | **`0.0157`** | **`233,620.8`** | **`311.9`** audio-s/s (`68.0` tok/s) |
+| `torchtpu-omni-eager` | `BF16` | `TP=4 × DP=4` | `16,384` | `2` | **`0.544`** | `60.52` | **`18.46`** | `592.1` | **`0.0123`** | **`241,011.6`** | **`866.5`** audio-s/s (`132.2` tok/s) |
+| `torchtpu-omni-eager` | `BF16` | `TP=4 × DP=4` | `65,536` | `1` | **`2.810`** | `48.47` | **`20.00`** | `2,859.7` | **`0.0129`** | **`93,290.0`** | **`400.0`** audio-s/s (`82.5` tok/s) |
+| `torchtpu-omni-eager` | `BF16` | `TP=4 × DP=4` | `65,536` | `2` | **`5.754`** | `57.65` | **`25.10`** | `5,809.1` | **`0.0156`** | **`91,114.8`** | **`637.6`** audio-s/s (`138.8` tok/s) |
+| `torchtpu-omni-eager` | `BF16` | `TP=4 × DP=4` | `131,072` | `1` | **`10.275`** | `66.51` | **`25.25`** | `10,330.1` | **`0.0155`** | **`51,025.2`** | **`316.8`** audio-s/s (`60.2` tok/s) |
+| `torchtpu-omni-compiled` | `BF16` | `TP=4 × DP=4` | `4,096` | `1` | **`1.954`** | `1,389.07` | **`518.94`** | `2,480.8` | **`0.2606`** | **`8,384.0`** | **`15.4`** audio-s/s (`2.9` tok/s) |
+| `torchtpu-omni-compiled` | `BF16` | `TP=4 × DP=4` | `4,096` | `4` | **`2.030`** | `758.18` | **`525.86`** | `2,563.2` | **`0.2642`** | **`32,288.4`** | **`60.8`** audio-s/s (`21.1` tok/s) |
+| `torchtpu-omni-compiled` | `BF16` | `TP=4 × DP=4` | `16,384` | `1` | **`3.931`** | `1,394.12` | **`1.25`** | `3,961.7` | **`0.0035`** | **`16,672.8`** | **`6,413.3`** audio-s/s (`2.9` tok/s) |
+| `torchtpu-omni-compiled` | `BF16` | `TP=4 × DP=4` | `16,384` | `2` | **`2.596`** | `48.64` | **`529.40`** | `3,154.9` | **`0.2678`** | **`50,496.0`** | **`30.2`** audio-s/s (`164.4` tok/s) |
+| `torchtpu-omni-compiled` | `BF16` | `TP=4 × DP=4` | `65,536` | `1` | **`4.530`** | `49.20` | **`1.27`** | `4,560.7` | **`0.0035`** | **`57,872.0`** | **`6,287.3`** audio-s/s (`81.3` tok/s) |
+| `torchtpu-omni-compiled` | `BF16` | `TP=4 × DP=4` | `65,536` | `2` | **`6.948`** | `48.54` | **`1.50`** | `6,979.4` | **`0.0038`** | **`75,458.0`** | **`10,668.9`** audio-s/s (`164.8` tok/s) |
+| `torchtpu-omni-compiled` | `BF16` | `TP=4 × DP=4` | `131,072` | `1` | **`10.272`** | `49.50` | **`1.26`** | `10,302.7` | **`0.0035`** | **`51,042.0`** | **`6,355.1`** audio-s/s (`80.8` tok/s) |
+
+#### Stage 2 — Audio WAV Framing & Multi-Frame `720p` Vision Preprocessing CPU Offload Ablation
+
+| Offload Stage | Batch / Frames | On-Host CPU (ms) | Disagg CPU RTT (ms) | Remote Server Compute (ms) | Measured Speedup | Optimal Routing Policy |
+|---|---:|---:|---:|---:|---:|---|
+| `audio_wav_24khz_2s` | `1` | `0.079` | `5.041` | `0.108` | **`0.02x`** | Keep In-Memory on Host (<0.3 ms) |
+| `audio_wav_24khz_2s` | `2` | `0.093` | `5.970` | `0.172` | **`0.02x`** | Keep In-Memory on Host (<0.3 ms) |
+| `audio_wav_24khz_2s` | `4` | `0.159` | `6.806` | `0.237` | **`0.02x`** | Keep In-Memory on Host (<0.3 ms) |
+| `audio_wav_24khz_2s` | `8` | `0.445` | `3.064` | `0.481` | **`0.15x`** | Keep In-Memory on Host (<0.3 ms) |
+| `vision_preproc_640x480_to_256x256` | `2` | `7.200` | `16.700` | `5.380` | **`0.43x`** | Keep In-Memory on Host (<0.3 ms) |
+| `vision_preproc_640x480_to_256x256` | `4` | `14.330` | `19.700` | `7.200` | **`0.73x`** | Keep In-Memory on Host (<0.3 ms) |
+| `vision_preproc_1280x720_to_448x448` | `8` | `86.160` | `57.620` | `30.520` | **`1.50x`** | Offload to AVX-512 CPU Pool |
+
+---
+
+## 6. Repository Layout & Reproduction
 
 - [`scripts/run_qwen3_omni_tpu_bench.py`](./scripts/run_qwen3_omni_tpu_bench.py) — Main TPU `v5p` / `v7x` benchmark driver (cooperative zero-disk HF-to-GCS staging, `/dev/shm` hydration, single-host PJRT isolation, `TorchTPU` / `vLLM` execution, and A/B CPU offload ablation).
 - [`scripts/multimodal_cpu_offload_server.py`](./scripts/multimodal_cpu_offload_server.py) & [`scripts/cpu_offload_client.py`](./scripts/cpu_offload_client.py) — Disaggregated CPU offload HTTP server and client.

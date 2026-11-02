@@ -601,75 +601,85 @@ def run_child_qwen3_omni_worker(
             super().__init__()
             self.dev = dev
             self.allow_scaled_mm = allow_scaled_mm
+            dev_idx = dev.index if dev.index is not None else int(str(dev).split(":")[-1])
+            torch.accelerator.set_device_index(dev_idx)
+
+            def _p(shape: tuple[int, ...]) -> nn.Parameter:
+                t = (torch.randn(shape, device="cpu", dtype=torch.bfloat16) * 0.02).to(dev)
+                return nn.Parameter(t, requires_grad=False)
+
+            def _fp8(t_tpu: torch.Tensor) -> torch.Tensor:
+                return t_tpu.to("cpu").to(torch.float8_e4m3fn).to(dev)
 
             # Thinker weights (all 2D shapes are multiples of 128 for TP=2 and TP=4)
-            self.wq = nn.Parameter(torch.randn((q_h * hd, d_think), device=dev, dtype=torch.bfloat16) * 0.02, requires_grad=False)
-            self.wk = nn.Parameter(torch.randn((kv_h * hd, d_think), device=dev, dtype=torch.bfloat16) * 0.02, requires_grad=False)
-            self.wv = nn.Parameter(torch.randn((kv_h * hd, d_think), device=dev, dtype=torch.bfloat16) * 0.02, requires_grad=False)
-            self.wo = nn.Parameter(torch.randn((d_think, q_h * hd), device=dev, dtype=torch.bfloat16) * 0.02, requires_grad=False)
-            self.rw = nn.Parameter(torch.randn((128, d_think), device=dev, dtype=torch.bfloat16) * 0.02, requires_grad=False)
+            self.wq = _p((q_h * hd, d_think))
+            self.wk = _p((kv_h * hd, d_think))
+            self.wv = _p((kv_h * hd, d_think))
+            self.wo = _p((d_think, q_h * hd))
+            self.rw = _p((128, d_think))
 
-            egu_bf16 = torch.randn((loc_exp, 2 * moe_i, d_think), device=dev, dtype=torch.bfloat16) * 0.02
-            edn_bf16 = torch.randn((loc_exp, d_think, moe_i), device=dev, dtype=torch.bfloat16) * 0.02
+            egu_bf16 = (torch.randn((loc_exp, 2 * moe_i, d_think), device="cpu", dtype=torch.bfloat16) * 0.02)
+            edn_bf16 = (torch.randn((loc_exp, d_think, moe_i), device="cpu", dtype=torch.bfloat16) * 0.02)
             if use_fp8:
-                self.register_buffer("exp_gu_fp8", egu_bf16.to(torch.float8_e4m3fn))
-                self.register_buffer("exp_dn_fp8", edn_bf16.to(torch.float8_e4m3fn))
+                self.register_buffer("exp_gu_fp8", egu_bf16.to(torch.float8_e4m3fn).to(dev))
+                self.register_buffer("exp_dn_fp8", edn_bf16.to(torch.float8_e4m3fn).to(dev))
                 self.exp_gu_bf16 = None
                 self.exp_dn_bf16 = None
             else:
                 self.exp_gu_fp8 = None
                 self.exp_dn_fp8 = None
-                self.register_buffer("exp_gu_bf16", egu_bf16)
-                self.register_buffer("exp_dn_bf16", edn_bf16)
+                self.register_buffer("exp_gu_bf16", egu_bf16.to(dev))
+                self.register_buffer("exp_dn_bf16", edn_bf16.to(dev))
 
             # Talker (20L 128E MoE, 16-RVQ) + 5L CodePredictor + 8L Code2Wav (24 kHz)
-            self.twq = nn.Parameter(torch.randn((tq_h * hd, d_talk), device=dev, dtype=torch.bfloat16) * 0.02, requires_grad=False)
-            self.twk = nn.Parameter(torch.randn((tkv_h * hd, d_talk), device=dev, dtype=torch.bfloat16) * 0.02, requires_grad=False)
-            self.twv = nn.Parameter(torch.randn((tkv_h * hd, d_talk), device=dev, dtype=torch.bfloat16) * 0.02, requires_grad=False)
-            self.two = nn.Parameter(torch.randn((d_talk, tq_h * hd), device=dev, dtype=torch.bfloat16) * 0.02, requires_grad=False)
-            self.trw = nn.Parameter(torch.randn((128, d_talk), device=dev, dtype=torch.bfloat16) * 0.02, requires_grad=False)
+            self.twq = _p((tq_h * hd, d_talk))
+            self.twk = _p((tkv_h * hd, d_talk))
+            self.twv = _p((tkv_h * hd, d_talk))
+            self.two = _p((d_talk, tq_h * hd))
+            self.trw = _p((128, d_talk))
 
-            tegu_bf16 = torch.randn((t_loc_exp, 2 * t_moe_i, d_talk), device=dev, dtype=torch.bfloat16) * 0.02
-            tedn_bf16 = torch.randn((t_loc_exp, d_talk, t_moe_i), device=dev, dtype=torch.bfloat16) * 0.02
+            tegu_bf16 = (torch.randn((t_loc_exp, 2 * t_moe_i, d_talk), device="cpu", dtype=torch.bfloat16) * 0.02)
+            tedn_bf16 = (torch.randn((t_loc_exp, d_talk, t_moe_i), device="cpu", dtype=torch.bfloat16) * 0.02)
             if use_fp8:
-                self.register_buffer("texp_gu_fp8", tegu_bf16.to(torch.float8_e4m3fn))
-                self.register_buffer("texp_dn_fp8", tedn_bf16.to(torch.float8_e4m3fn))
+                self.register_buffer("texp_gu_fp8", tegu_bf16.to(torch.float8_e4m3fn).to(dev))
+                self.register_buffer("texp_dn_fp8", tedn_bf16.to(torch.float8_e4m3fn).to(dev))
                 self.texp_gu_bf16 = None
                 self.texp_dn_bf16 = None
             else:
                 self.texp_gu_fp8 = None
                 self.texp_dn_fp8 = None
-                self.register_buffer("texp_gu_bf16", tegu_bf16)
-                self.register_buffer("texp_dn_bf16", tedn_bf16)
+                self.register_buffer("texp_gu_bf16", tegu_bf16.to(dev))
+                self.register_buffer("texp_dn_bf16", tedn_bf16.to(dev))
 
             # 5L CodePredictor (16-RVQ acoustic codebooks) + 8L Code2Wav (24 kHz vocoder)
-            self.cp_qkv = nn.Parameter(torch.randn((3 * d_talk, d_talk), device=dev, dtype=torch.bfloat16) * 0.02, requires_grad=False)
-            self.cp_o = nn.Parameter(torch.randn((d_talk, d_talk), device=dev, dtype=torch.bfloat16) * 0.02, requires_grad=False)
-            self.cp_ff1 = nn.Parameter(torch.randn((cp_ffn, d_talk), device=dev, dtype=torch.bfloat16) * 0.02, requires_grad=False)
-            self.cp_ff2 = nn.Parameter(torch.randn((d_talk, cp_ffn), device=dev, dtype=torch.bfloat16) * 0.02, requires_grad=False)
-            self.rvq_head = nn.Parameter(torch.randn((16 * 128, d_talk), device=dev, dtype=torch.bfloat16) * 0.02, requires_grad=False)
-            self.c2w_w1 = nn.Parameter(torch.randn((c2w_ffn, d_talk), device=dev, dtype=torch.bfloat16) * 0.02, requires_grad=False)
-            self.c2w_w2 = nn.Parameter(torch.randn((d_talk, c2w_ffn), device=dev, dtype=torch.bfloat16) * 0.02, requires_grad=False)
+            self.cp_qkv = _p((3 * d_talk, d_talk))
+            self.cp_o = _p((d_talk, d_talk))
+            self.cp_ff1 = _p((cp_ffn, d_talk))
+            self.cp_ff2 = _p((d_talk, cp_ffn))
+            self.rvq_head = _p((16 * 128, d_talk))
+            self.c2w_w1 = _p((c2w_ffn, d_talk))
+            self.c2w_w2 = _p((d_talk, c2w_ffn))
 
             if use_fp8:
-                self.register_buffer("wq_fp8", self.wq.data.to(torch.float8_e4m3fn))
-                self.register_buffer("wk_fp8", self.wk.data.to(torch.float8_e4m3fn))
-                self.register_buffer("wv_fp8", self.wv.data.to(torch.float8_e4m3fn))
-                self.register_buffer("wo_fp8", self.wo.data.to(torch.float8_e4m3fn))
-                self.register_buffer("rw_fp8", self.rw.data.to(torch.float8_e4m3fn))
-                self.register_buffer("twq_fp8", self.twq.data.to(torch.float8_e4m3fn))
-                self.register_buffer("twk_fp8", self.twk.data.to(torch.float8_e4m3fn))
-                self.register_buffer("twv_fp8", self.twv.data.to(torch.float8_e4m3fn))
-                self.register_buffer("two_fp8", self.two.data.to(torch.float8_e4m3fn))
-                self.register_buffer("trw_fp8", self.trw.data.to(torch.float8_e4m3fn))
-                self.register_buffer("cp_qkv_fp8", self.cp_qkv.data.to(torch.float8_e4m3fn))
-                self.register_buffer("cp_o_fp8", self.cp_o.data.to(torch.float8_e4m3fn))
-                self.register_buffer("cp_ff1_fp8", self.cp_ff1.data.to(torch.float8_e4m3fn))
-                self.register_buffer("cp_ff2_fp8", self.cp_ff2.data.to(torch.float8_e4m3fn))
-                self.register_buffer("rvq_head_fp8", self.rvq_head.data.to(torch.float8_e4m3fn))
-                self.register_buffer("c2w_w1_fp8", self.c2w_w1.data.to(torch.float8_e4m3fn))
-                self.register_buffer("c2w_w2_fp8", self.c2w_w2.data.to(torch.float8_e4m3fn))
-                self.register_buffer("unit_scale", torch.ones(scale_shape, device=dev, dtype=torch.float32))
+                self.register_buffer("wq_fp8", _fp8(self.wq.data))
+                self.register_buffer("wk_fp8", _fp8(self.wk.data))
+                self.register_buffer("wv_fp8", _fp8(self.wv.data))
+                self.register_buffer("wo_fp8", _fp8(self.wo.data))
+                self.register_buffer("rw_fp8", _fp8(self.rw.data))
+                self.register_buffer("twq_fp8", _fp8(self.twq.data))
+                self.twk_fp8_buf = _fp8(self.twk.data)
+                self.register_buffer("twk_fp8", self.twk_fp8_buf)
+                self.register_buffer("twv_fp8", _fp8(self.twv.data))
+                self.register_buffer("two_fp8", _fp8(self.two.data))
+                self.register_buffer("trw_fp8", _fp8(self.trw.data))
+                self.register_buffer("cp_qkv_fp8", _fp8(self.cp_qkv.data))
+                self.register_buffer("cp_o_fp8", _fp8(self.cp_o.data))
+                self.register_buffer("cp_ff1_fp8", _fp8(self.cp_ff1.data))
+                self.register_buffer("cp_ff2_fp8", _fp8(self.cp_ff2.data))
+                self.register_buffer("rvq_head_fp8", _fp8(self.rvq_head.data))
+                self.register_buffer("c2w_w1_fp8", _fp8(self.c2w_w1.data))
+                self.register_buffer("c2w_w2_fp8", _fp8(self.c2w_w2.data))
+                self.register_buffer("unit_scale", torch.ones(scale_shape, device="cpu", dtype=torch.float32).to(dev))
             else:
                 self.wq_fp8 = None
                 self.wk_fp8 = None
@@ -688,7 +698,7 @@ def run_child_qwen3_omni_worker(
                 self.rvq_head_fp8 = None
                 self.c2w_w1_fp8 = None
                 self.c2w_w2_fp8 = None
-                self.register_buffer("unit_scale", torch.ones((1,), device=dev, dtype=torch.float32))
+                self.register_buffer("unit_scale", torch.ones((1,), device="cpu", dtype=torch.float32).to(dev))
 
         def _mm(self, x: torch.Tensor, w_bf16: torch.Tensor, w_fp8: torch.Tensor | None) -> torch.Tensor:
             n_out, k_in = w_bf16.shape
@@ -983,6 +993,7 @@ def run_child_qwen3_omni_worker(
                         del xs, txs, kcs, vcs, xts, xws
                         torch.accelerator.synchronize()
                 except Exception as exc:
+                    clean_exc = " ".join(str(exc).splitlines())[:160]
                     all_rows.append(
                         {
                             "engine": engine_label,
@@ -992,7 +1003,7 @@ def run_child_qwen3_omni_worker(
                             "dp_per_host": dp_per_host,
                             "context_len": ctx_len,
                             "batch_size": bsz,
-                            "status": f"FAIL({type(exc).__name__}: {str(exc)[:160]})",
+                            "status": f"FAIL({type(exc).__name__}: {clean_exc})",
                         }
                     )
 
