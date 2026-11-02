@@ -12,7 +12,7 @@ Qwen/Qwen3-Omni-30B-A3B-Instruct (128-Expert MoE Thinker 64K/128K + Talker 16-RV
 | **Architecture** | `Thinker` (`48L` `128E` top-8 MoE, `64K` native / `128K` YaRN) + `Talker` (`20L` `128E` `16`-RVQ + `5L` `CodePredictor`) + `Code2Wav` (`24 kHz`) |
 | **Serving Engines** | Single-Client Multi-Device `TorchTPU` (`torchtpu-omni-eager` & `torchtpu-omni-compiled`, `TP=2` & `TP=4`) + `vLLM-TorchTPU` EP probes |
 | **Precisions & Contexts** | `BF16` & `FP8_DYNAMIC` (`out_dtype=bfloat16`) across `4K`, `16K`, `64K`, and `128K` multimodal contexts |
-| **Disaggregated CPU Offload** | Adaptive routing to `multimodal-cpu-offload-svc` (`c3-standard-44` AVX-512) for multi-frame `720p` vision preprocessing + in-memory host WAV framing |
+| **Disaggregated CPU Offload** | Adaptive routing (`ADAPTIVE_OFFLOAD_MIN_BYTES=262144`) via `Keep-Alive + TCP_NODELAY` to `multimodal-cpu-offload-svc` (`c3-standard-44` AVX-512) for multi-frame `720p` vision + in-memory host WAV framing |
 
 ---
 
@@ -36,14 +36,14 @@ Non-TPU media muxing, high-resolution image compression, and multi-camera/multi-
 
 ---
 
-## 4. Before vs. After Disaggregated Multimodal Offloading & Adaptive Threshold Routing
+## 4. Before vs. After Disaggregated Multimodal Offloading & Adaptive Threshold Routing (`ADAPTIVE_OFFLOAD_MIN_BYTES=262144`)
 
-Direct A/B ablation on `v5p-16` comparing **on-host TPU VM CPU execution** vs. **disaggregated `c3-standard-44` AVX-512 CPU pods (`multimodal-cpu-offload-svc:8090`)** across heavy multi-frame video/vision inputs and lightweight `24 kHz` streaming audio chunks:
+Direct A/B ablation on `v5p-16` comparing **on-host TPU VM CPU execution** vs. **disaggregated `c3-standard-44` AVX-512 CPU pods (`multimodal-cpu-offload-svc:8090`)** across heavy multi-frame video/vision inputs (`>= 256 KB`) and lightweight `24 kHz` streaming audio chunks (`< 256 KB`):
 
 | Modality & Workload | On-Host TPU VM CPU | Disagg AVX-512 CPU Service | Measured Speedup & Routing Decision | Code & Result References |
 |---|---:|---:|---|---|
-| **`8`-Frame `1280x720 -> 448x448` Vision Preproc** | `85.55 ms` | **`47.89 ms` RTT** (`32.4 ms` server compute) | **`1.79x` faster** — **Offload to AVX-512 CPU Pool** | [`multimodal_cpu_offload_server.py`](./scripts/multimodal_cpu_offload_server.py) · [`v5p-16/summary.json`](./results/v5p-16/summary.json) |
-| **`2s` `24 kHz` PCM16 WAV Framing (`96 KB` payload)** | **`0.090 – 0.232 ms`** | `3.28 – 6.99 ms` HTTP RTT (`0.08 ms` compute) | **Keep in-memory on host** (`<0.25 ms`, avoids HTTP RTT; cuts First-Audio `153.7 -> 138.9 ms`) | [`cpu_offload_client.py`](./scripts/cpu_offload_client.py) · [`v5p-16/summary.json`](./results/v5p-16/summary.json) |
+| **`8`-Frame `1280x720 -> 448x448` Vision Preproc** | `85.55 ms` | **`47.89 ms` RTT** (`32.4 ms` server compute) | **`1.79x` faster** — **Offload to AVX-512 CPU Pool** (`>= 256 KB`) | [`multimodal_cpu_offload_server.py`](./scripts/multimodal_cpu_offload_server.py) · [`v5p-16/summary.json`](./results/v5p-16/summary.json) |
+| **`2s` `24 kHz` PCM16 WAV Framing (`96 KB` payload)** | **`0.090 – 0.232 ms`** | `3.28 – 6.99 ms` HTTP RTT (`0.08 ms` compute) | **Auto-routed in-memory on host** (`< 256 KB` threshold; cuts First-Audio `153.7 -> 138.9 ms`) | [`cpu_offload_client.py`](./scripts/cpu_offload_client.py) · [`v5p-16/summary.json`](./results/v5p-16/summary.json) |
 | **`16K` Talker + `Code2Wav` (`Eager` vs `torch.compile`)** | `47.53 ms` / `2s` audio (`168.3 audio-s/s`) | **`1.26 ms` / `2s` audio** (**`6,368.1 audio-s/s`**, `0.0033` RTF) | **`37.7x` faster Talker+Code2Wav synthesis** | [`run_qwen3_omni_tpu_bench.py`](./scripts/run_qwen3_omni_tpu_bench.py) · [`v5p-16/summary.json`](./results/v5p-16/summary.json) |
 
 ---
