@@ -21,7 +21,7 @@ spec:
         app: multimodal-cpu-offload-svc
     spec:
       nodeSelector:
-        cloud.google.com/tpu-worker-node: omni-cpu-offload-pool
+        cloud.google.com/gke-nodepool: omni-cpu-offload-pool
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:

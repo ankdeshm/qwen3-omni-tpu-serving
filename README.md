@@ -2,6 +2,12 @@
 
 Qwen/Qwen3-Omni-30B-A3B-Instruct (128-Expert MoE Thinker 64K/128K + Talker 16-RVQ + 24 kHz Streaming Speech) Serving on Cloud TPU v5p & v7x with TorchTPU & Disaggregated Audio/Vision Offloading.
 
+
+> [!IMPORTANT]
+> **Benchmark Scope & Measurement Methodology**
+> - **Stage 1 (`torchtpu-omni-eager` / `torchtpu-omni-compiled`):** **Local-Shard Layer-Scaled `Thinker` + Full-Depth `Talker / CodePredictor / Code2Wav` Operator Microbenchmark** (`run_child_qwen3_omni_worker` in [`scripts/run_qwen3_omni_tpu_bench.py`](./scripts/run_qwen3_omni_tpu_bench.py)) holding real `Qwen/Qwen3-Omni-30B-A3B-Instruct` `safetensors` shards in HBM while timing `6` (`<=16K`) or `4` (`>=64K`) `Thinker` MoE layers linearly scaled to `48L` plus all `20L Talker + 5L CodePredictor + 8L Code2Wav` blocks **excluding inter-chip TP/EP `AllReduce`/`AllToAll` collectives**. On `torchtpu-omni-compiled`, `4K` (`513–589 ms` speech chunk) and `16K B=2` (`529–547 ms`) rows include worker-thread first-shape `TorchDynamo` compilation, whereas `16K B=1`, `64K`, and `128K` (`1.25–3.64 ms`) reflect warm compiled `Talker+Code2Wav` execution.
+> - **Stage 2 (`POST /encode_wav` & `POST /preprocess_vision`):** **100% Real End-to-End HTTP + AVX-512 Audio/Vision Offload Ablation** against `multimodal-cpu-offload-svc:8090` (`c3-standard-44`), motivating adaptive payload routing (`ADAPTIVE_OFFLOAD_MIN_BYTES=262144`: sub-`0.5 ms` `24 kHz` WAV framing stays in-memory on host, while multi-frame vision preprocessing offloads over `Keep-Alive + TCP_NODELAY` for **`1.13x–2.04x` speedup** in Wave 3).
+
 ---
 
 ## 1. Model & System Architecture
@@ -38,7 +44,7 @@ Non-TPU media muxing, high-resolution image compression, and multi-camera/multi-
 
 ## 4. Before vs. After Disaggregated Multimodal Offloading (`Keep-Alive + TCP_NODELAY`) & Adaptive Threshold Routing
 
-Direct A/B ablation across `v5p-16` (`Wave-1` vs. `Wave-3 Keep-Alive + TCP_NODELAY`) and `v7x` comparing **on-host TPU VM CPU execution** vs. **persistent `HTTP/1.1 Keep-Alive + TCP_NODELAY` AVX-512 CPU pods (`multimodal-cpu-offload-svc:8090`)** across heavy multi-frame video/vision inputs (`>= 256 KB`) and lightweight `24 kHz` streaming audio chunks (`< 256 KB`):
+Direct A/B ablation on `v5p-16` (`Wave-1` unpooled HTTP vs. `Wave-3 Keep-Alive + TCP_NODELAY`; `v7x` manifests provided in [`k8s/`](./k8s/)) comparing **on-host TPU VM CPU execution** vs. **persistent `HTTP/1.1 Keep-Alive + TCP_NODELAY` AVX-512 CPU pods (`multimodal-cpu-offload-svc:8090`)** across heavy multi-frame video/vision inputs (`>= 256 KB`) and lightweight `24 kHz` streaming audio chunks (`< 256 KB`):
 
 | Modality & Workload | On-Host TPU VM CPU (`Before`) | `Keep-Alive` AVX-512 CPU Service (`After`) | Measured Speedup & Routing Decision | Code & Result References |
 |---|---:|---:|---|---|
@@ -105,8 +111,8 @@ Every table below is generated directly from the verified `PASS` records in [`re
 | `audio_wav_24khz_2s` | `2` | `0.093` | `5.970` | `0.172` | **`0.02x`** | Keep In-Memory on Host (<0.3 ms) |
 | `audio_wav_24khz_2s` | `4` | `0.159` | `6.806` | `0.237` | **`0.02x`** | Keep In-Memory on Host (<0.3 ms) |
 | `audio_wav_24khz_2s` | `8` | `0.445` | `3.064` | `0.481` | **`0.15x`** | Keep In-Memory on Host (<0.3 ms) |
-| `vision_preproc_640x480_to_256x256` | `2` | `7.200` | `16.700` | `5.380` | **`0.43x`** | Keep In-Memory on Host (<0.3 ms) |
-| `vision_preproc_640x480_to_256x256` | `4` | `14.330` | `19.700` | `7.200` | **`0.73x`** | Keep In-Memory on Host (<0.3 ms) |
+| `vision_preproc_640x480_to_256x256` | `2` | `7.200` | `16.700` | `5.380` | **`0.43x`** | Unpooled HTTP RTT in Wave-1 (`-> 1.13x` Offload w/ Wave-3 Keep-Alive) |
+| `vision_preproc_640x480_to_256x256` | `4` | `14.330` | `19.700` | `7.200` | **`0.73x`** | Unpooled HTTP RTT in Wave-1 (`-> 1.64x` Offload w/ Wave-3 Keep-Alive) |
 | `vision_preproc_1280x720_to_448x448` | `8` | `86.160` | `57.620` | `30.520` | **`1.50x`** | Offload to AVX-512 CPU Pool |
 
 ### Slice `v5p-16-wave3-keepalive` (`v5p`, `35` Verified Benchmark Points)
