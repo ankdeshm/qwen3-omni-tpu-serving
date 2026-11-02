@@ -1,0 +1,98 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: v7x16-spot-omni-world-portfolio
+  namespace: default
+  labels:
+    app: v7x16-spot-omni-world-portfolio
+    portfolio: omni-world-v7x-spot
+spec:
+  completions: 4
+  parallelism: 4
+  completionMode: Indexed
+  backoffLimit: 12
+  template:
+    metadata:
+      annotations:
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
+      labels:
+        app: v7x16-spot-omni-world-portfolio
+        portfolio: omni-world-v7x-spot
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      restartPolicy: OnFailure
+      serviceAccountName: default
+      nodeSelector:
+        cloud.google.com/gke-nodepool: tpu-v7x-16-pool
+        cloud.google.com/gke-tpu-accelerator: tpu7x
+        cloud.google.com/gke-tpu-topology: 2x2x4
+      tolerations:
+      - key: google.com/tpu
+        operator: Exists
+        effect: NoSchedule
+      - key: cloud.google.com/gke-spot
+        operator: Exists
+        effect: NoSchedule
+      - key: cloud.google.com/gke-queued
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: omni-v7x-bench
+        image: us-central1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/vllm/vllm-torchtpu-omni:v0.32.0
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          privileged: true
+        env:
+        - name: PJRT_DEVICE
+          value: "TPU"
+        - name: MULTIMODAL_CPU_OFFLOAD_URL
+          value: "http://multimodal-cpu-offload-svc.default.svc.cluster.local:8090"
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: hf-token
+              key: HF_TOKEN
+              optional: true
+        command:
+        - bash
+        - -lc
+        - |
+          set -euo pipefail
+          ulimit -c 0 || true
+          mount -o remount,size=850G /dev/shm || true
+          rm -rf /dev/shm/GR00T* /dev/shm/Qwen* /dev/shm/Cosmos* /dev/shm/Hunyuan* /dev/shm/hf_cache /workspace/core* || true
+          mkdir -p /tmp/omni_bench
+          TOK=$(curl -sS -H "Metadata-Flavor: Google" "http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token" | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+          for f in gcs_stager.py tpu_single_host_setup.py cpu_offload_client.py run_gr00t_vla_tpu_bench.py run_qwen_image_tpu_bench.py run_qwen3_omni_tpu_bench.py run_cosmos3_super_tpu_bench.py run_hunyuan_image3_tpu_bench.py; do
+            curl -fsSL -H "Authorization: Bearer ${TOK}" \
+              "https://storage.googleapis.com/storage/v1/b/YOUR_GCS_BUCKET/o/omni-world-portfolio%2Fscripts%2F${f}?alt=media" \
+              -o "/tmp/omni_bench/${f}"
+          done
+          # Stage checkpoints cooperatively across all 4 Spot v7x hosts first
+          for s in run_gr00t_vla_tpu_bench.py run_qwen_image_tpu_bench.py run_qwen3_omni_tpu_bench.py run_cosmos3_super_tpu_bench.py run_hunyuan_image3_tpu_bench.py; do
+            python3 -u "/tmp/omni_bench/${s}" --stage-only --chip-type=v7x --slice-name=v7x-16 --num-hosts=4 --cores-per-host=8 --use-shm || true
+          done
+          if [ "${JOB_COMPLETION_INDEX:-0}" != "0" ]; then
+            echo "[v7x-spot-host-${JOB_COMPLETION_INDEX}] Cooperative staging complete; exiting cleanly."
+            exit 0
+          fi
+          # Rank 0 executes each suite sequentially in order of fastest -> largest so results land in GCS rapidly even on Spot!
+          for s in run_gr00t_vla_tpu_bench.py run_qwen_image_tpu_bench.py run_qwen3_omni_tpu_bench.py run_cosmos3_super_tpu_bench.py run_hunyuan_image3_tpu_bench.py; do
+            echo "=== [v7x-16] Running ${s} ==="
+            python3 -u "/tmp/omni_bench/${s}" --chip-type=v7x --slice-name=v7x-16 --num-hosts=4 --cores-per-host=8 --use-shm || true
+          done
+        resources:
+          requests:
+            google.com/tpu: "4"
+            memory: "700Gi"
+          limits:
+            google.com/tpu: "4"
+        volumeMounts:
+        - name: dshm
+          mountPath: /dev/shm
+      volumes:
+      - name: dshm
+        hostPath:
+          path: /dev/shm
+          type: Directory

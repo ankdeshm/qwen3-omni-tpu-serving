@@ -1,0 +1,168 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: v7x-spot-1n-omni-world-portfolio
+  namespace: default
+  labels:
+    app: v7x-spot-1n-omni-world-portfolio
+    suite: omni-world-portfolio
+spec:
+  completions: 1
+  parallelism: 1
+  completionMode: Indexed
+  backoffLimit: 12
+  template:
+    metadata:
+      annotations:
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
+      labels:
+        app: v7x-spot-1n-omni-world-portfolio
+        suite: omni-world-portfolio
+    spec:
+      serviceAccountName: default
+      restartPolicy: OnFailure
+      terminationGracePeriodSeconds: 15
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector:
+        cloud.google.com/gke-nodepool: tpu-v7x-4-spot-pool
+        cloud.google.com/gke-tpu-accelerator: tpu7x
+        cloud.google.com/gke-tpu-topology: 2x2x1
+      tolerations:
+      - key: "google.com/tpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+      - key: "cloud.google.com/gke-spot"
+        operator: "Exists"
+        effect: "NoSchedule"
+      - key: "cloud.google.com/gke-queued"
+        operator: "Exists"
+        effect: "NoSchedule"
+      containers:
+      - name: tpu-bench
+        image: us-central1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/vllm/vllm-torchtpu-omni:v0.32.0
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          privileged: true
+        env:
+        - name: PJRT_DEVICE
+          value: "TPU"
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: hf-token
+              key: HF_TOKEN
+              optional: true
+        - name: HUGGING_FACE_HUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: hf-token
+              key: HF_TOKEN
+              optional: true
+        - name: MULTIMODAL_CPU_OFFLOAD_URL
+          value: "http://multimodal-cpu-offload-svc.default.svc.cluster.local:8090"
+        - name: HF_HOME
+          value: "/dev/shm/hf_cache"
+        - name: TMPDIR
+          value: "/dev/shm/tmp"
+        - name: TORCHINDUCTOR_CACHE_DIR
+          value: "/dev/shm/torchinductor"
+        resources:
+          requests:
+            google.com/tpu: "4"
+            memory: "700Gi"
+          limits:
+            google.com/tpu: "4"
+        volumeMounts:
+        - name: dshm
+          mountPath: /dev/shm
+        command:
+        - bash
+        - -lc
+        - |
+          set -euo pipefail
+          ulimit -c 0 || true
+          mount -o remount,size=850G /dev/shm || true
+          rm -rf /dev/shm/* /dev/shm/.[!.]* /dev/shm/..?* 2>/dev/null || true
+          mkdir -p /dev/shm/tmp /dev/shm/hf_cache /dev/shm/torchinductor /tmp/omni_bench
+          df -h /dev/shm
+
+          BUCKET="YOUR_GCS_BUCKET"
+          TOK=$(curl -sS -H "Metadata-Flavor: Google" \
+            "http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token" \
+            | python3 -c "import sys, json; print(json.load(sys.stdin)['access_token'])")
+
+          for SCRIPT in \
+            gcs_stager.py \
+            tpu_single_host_setup.py \
+            cpu_offload_client.py \
+            run_gr00t_vla_tpu_bench.py \
+            run_qwen_image_tpu_bench.py \
+            run_qwen3_omni_tpu_bench.py \
+            run_cosmos3_super_tpu_bench.py \
+            run_hunyuan_image3_tpu_bench.py; do
+            curl -fsSL --retry 4 --retry-delay 2 \
+              -H "Authorization: Bearer ${TOK}" \
+              "https://storage.googleapis.com/storage/v1/b/${BUCKET}/o/omni-world-portfolio%2Fscripts%2F${SCRIPT}?alt=media" \
+              -o "/tmp/omni_bench/${SCRIPT}"
+          done
+
+          echo "[v7x-spot-1n] 1/5 Running GR00T-N1.7-3B VLA on TPU v7x-4 (8 TensorCores)..."
+          python3 -u /tmp/omni_bench/run_gr00t_vla_tpu_bench.py \
+            --chip-type=v7x \
+            --slice-name=v7x-spot-4c \
+            --num-hosts=1 \
+            --cores-per-host=8 \
+            --bucket="${BUCKET}" \
+            --use-shm \
+            --output-dir=/tmp/omni_bench/results/gr00t-n1-7-3b || echo "[WARN] GR00T v7x exited non-zero"
+          rm -rf /dev/shm/GR00T* /dev/shm/_hf_stage_tmp || true
+
+          echo "[v7x-spot-1n] 2/5 Running Qwen-Image + Qwen-Image-2.1 (Qwen3-VL) on TPU v7x-4 (8 TensorCores)..."
+          python3 -u /tmp/omni_bench/run_qwen_image_tpu_bench.py \
+            --chip-type=v7x \
+            --slice-name=v7x-spot-4c \
+            --num-hosts=1 \
+            --cores-per-host=8 \
+            --bucket="${BUCKET}" \
+            --use-shm \
+            --output-dir=/tmp/omni_bench/results/qwen-image || echo "[WARN] Qwen-Image v7x exited non-zero"
+          rm -rf /dev/shm/Qwen* /dev/shm/_hf_stage_tmp || true
+
+          echo "[v7x-spot-1n] 3/5 Running Qwen3-Omni-30B-A3B-Instruct on TPU v7x-4 (8 TensorCores)..."
+          python3 -u /tmp/omni_bench/run_qwen3_omni_tpu_bench.py \
+            --chip-type=v7x \
+            --slice-name=v7x-spot-4c \
+            --num-hosts=1 \
+            --cores-per-host=8 \
+            --bucket="${BUCKET}" \
+            --use-shm \
+            --output-dir=/tmp/omni_bench/results/qwen3-omni || echo "[WARN] Qwen3-Omni v7x exited non-zero"
+          rm -rf /dev/shm/Qwen* /dev/shm/_hf_stage_tmp || true
+
+          echo "[v7x-spot-1n] 4/5 Running Cosmos3-Super World Model on TPU v7x-4 (8 TensorCores)..."
+          python3 -u /tmp/omni_bench/run_cosmos3_super_tpu_bench.py \
+            --chip-type=v7x \
+            --slice-name=v7x-spot-4c \
+            --num-hosts=1 \
+            --cores-per-host=8 \
+            --bucket="${BUCKET}" \
+            --use-shm \
+            --output-dir=/tmp/omni_bench/results/cosmos3-super || echo "[WARN] Cosmos3 v7x exited non-zero"
+          rm -rf /dev/shm/Cosmos* /dev/shm/_hf_stage_tmp || true
+
+          echo "[v7x-spot-1n] 5/5 Running HunyuanImage-3.0 83B MoE on TPU v7x-4 (8 TensorCores)..."
+          python3 -u /tmp/omni_bench/run_hunyuan_image3_tpu_bench.py \
+            --chip-type=v7x \
+            --slice-name=v7x-spot-4c \
+            --num-hosts=1 \
+            --cores-per-host=8 \
+            --bucket="${BUCKET}" \
+            --use-shm \
+            --output-dir=/tmp/omni_bench/results/hunyuan-image-3 || echo "[WARN] HunyuanImage3 v7x exited non-zero"
+
+          echo "[v7x-spot-1n] Completed all 5 portfolio suites on TPU v7x-4 (8 TensorCores)."
+      volumes:
+      - name: dshm
+        emptyDir:
+          medium: Memory

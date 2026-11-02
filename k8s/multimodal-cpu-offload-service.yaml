@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: multimodal-cpu-offload-svc
+  namespace: default
+  labels:
+    app: multimodal-cpu-offload-svc
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 0
+  selector:
+    matchLabels:
+      app: multimodal-cpu-offload-svc
+  template:
+    metadata:
+      labels:
+        app: multimodal-cpu-offload-svc
+    spec:
+      nodeSelector:
+        cloud.google.com/gke-nodepool: omni-cpu-offload-pool
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: multimodal-cpu-offload-svc
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: offload-server
+        image: us-central1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/vllm/vllm-torchtpu-omni:v0.32.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8090
+          name: http
+        env:
+        - name: PORT
+          value: "8090"
+        command:
+        - bash
+        - -lc
+        - |
+          set -euo pipefail
+          mkdir -p /dev/shm/multimodal_cpu_spool
+          TOK=$(curl -sS -H "Metadata-Flavor: Google" "http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token" | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+          curl -fsSL -H "Authorization: Bearer ${TOK}" \
+            "https://storage.googleapis.com/storage/v1/b/YOUR_GCS_BUCKET/o/omni-world-portfolio%2Fscripts%2Fmultimodal_cpu_offload_server.py?alt=media" \
+            -o /tmp/multimodal_cpu_offload_server.py
+          exec python3 -u /tmp/multimodal_cpu_offload_server.py
+        resources:
+          requests:
+            cpu: "38"
+            memory: "140Gi"
+          limits:
+            cpu: "42"
+            memory: "160Gi"
+        volumeMounts:
+        - name: dshm
+          mountPath: /dev/shm
+      volumes:
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 80Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: multimodal-cpu-offload-svc
+  namespace: default
+  labels:
+    app: multimodal-cpu-offload-svc
+spec:
+  selector:
+    app: multimodal-cpu-offload-svc
+  ports:
+  - name: http
+    port: 8090
+    targetPort: 8090
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: video-encode-svc
+  namespace: default
+  labels:
+    app: multimodal-cpu-offload-svc
+spec:
+  selector:
+    app: multimodal-cpu-offload-svc
+  ports:
+  - name: http
+    port: 8090
+    targetPort: 8090
+    protocol: TCP
