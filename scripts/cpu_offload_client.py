@@ -29,24 +29,67 @@ DEFAULT_OFFLOAD_BASE_URL = os.environ.get(
 ).rstrip("/")
 
 
+import http.client
+import socket
+import threading
+import urllib.parse
+
+ADAPTIVE_OFFLOAD_MIN_BYTES = int(os.environ.get("ADAPTIVE_OFFLOAD_MIN_BYTES", "262144"))
+_TLS_CONN = threading.local()
+
+
+def _get_keepalive_conn(host: str, port: int, timeout: float) -> http.client.HTTPConnection:
+    key = f"{host}:{port}"
+    conns: dict[str, http.client.HTTPConnection] = getattr(_TLS_CONN, "conns", None) or {}
+    _TLS_CONN.conns = conns
+    conn = conns.get(key)
+    if conn is None or conn.sock is None:
+        conn = http.client.HTTPConnection(host, port, timeout=timeout)
+        conn.connect()
+        if conn.sock is not None:
+            conn.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        conns[key] = conn
+    return conn
+
+
 def _post_framed(endpoint: str, meta: dict[str, Any], payload: bytes | memoryview, timeout: float = 120.0) -> tuple[bytes, dict[str, str], float]:
+    parsed = urllib.parse.urlsplit(endpoint)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 80
+    path = parsed.path or "/"
     meta_b = json.dumps(meta).encode("utf-8")
     total = 4 + len(meta_b) + len(payload)
     buf = bytearray(total)
     struct.pack_into(">I", buf, 0, len(meta_b))
     buf[4 : 4 + len(meta_b)] = meta_b
     buf[4 + len(meta_b) :] = payload
+    hdrs_out = {
+        "Content-Type": "application/octet-stream",
+        "Content-Length": str(total),
+        "Connection": "keep-alive",
+    }
     t0 = time.perf_counter()
-    req = urllib.request.Request(
-        endpoint,
-        data=buf,
-        method="POST",
-        headers={"Content-Type": "application/octet-stream", "Content-Length": str(total)},
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        out = resp.read()
-        hdrs = {k.lower(): v for k, v in resp.headers.items()}
-    return out, hdrs, time.perf_counter() - t0
+    for attempt in range(2):
+        try:
+            conn = _get_keepalive_conn(host, port, timeout)
+            conn.request("POST", path, body=memoryview(buf), headers=hdrs_out)
+            resp = conn.getresponse()
+            out = resp.read()
+            if resp.status >= 400:
+                raise RuntimeError(f"HTTP {resp.status}: {out[:200]!r}")
+            hdrs = {k.lower(): v for k, v in resp.getheaders()}
+            return out, hdrs, time.perf_counter() - t0
+        except Exception:
+            conns = getattr(_TLS_CONN, "conns", {})
+            old = conns.pop(f"{host}:{port}", None)
+            if old is not None:
+                try:
+                    old.close()
+                except Exception:
+                    pass
+            if attempt == 1:
+                raise
+    raise RuntimeError("unreachable")
 
 
 def check_offload_health(base_url: str = DEFAULT_OFFLOAD_BASE_URL) -> dict[str, Any]:

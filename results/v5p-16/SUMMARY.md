@@ -1,8 +1,8 @@
 # `Qwen/Qwen3-Omni-30B-A3B-Instruct` Any-to-Any MoE Serving on Cloud TPU `v5p` & `v7x` — Slice `v5p-16`
 
-### Slice `v5p-16` (`v5p`, `21` Verified Benchmark Points)
+### Slice `v5p-16` (`v5p`, `35` Verified Benchmark Points)
 
-- **Raw Artifacts:** [`results/v5p-16/SUMMARY.md`](./SUMMARY.md) · [`results/v5p-16/summary.json`](./summary.json) *(updated `2026-11-02T19:59:58.503282+00:00`)*
+- **Raw Artifacts:** [`results/v5p-16/SUMMARY.md`](./SUMMARY.md) · [`results/v5p-16/summary.json`](./summary.json) *(updated `2026-11-02T20:02:58.290265+00:00`)*
 
 #### Stage 1 — End-to-End `Thinker` (`4K`–`128K`) + `Talker` (`16`-RVQ) + `24 kHz` Streaming Speech
 
@@ -29,6 +29,20 @@
 | `torchtpu-omni-compiled` | `BF16` | `TP=4 × DP=4` | `65,536` | `1` | **`4.530`** | `49.20` | **`1.27`** | `4,560.7` | **`0.0035`** | **`57,872.0`** | **`6,287.3`** audio-s/s (`81.3` tok/s) |
 | `torchtpu-omni-compiled` | `BF16` | `TP=4 × DP=4` | `65,536` | `2` | **`6.948`** | `48.54` | **`1.50`** | `6,979.4` | **`0.0038`** | **`75,458.0`** | **`10,668.9`** audio-s/s (`164.8` tok/s) |
 | `torchtpu-omni-compiled` | `BF16` | `TP=4 × DP=4` | `131,072` | `1` | **`10.272`** | `49.50` | **`1.26`** | `10,302.7` | **`0.0035`** | **`51,042.0`** | **`6,355.1`** audio-s/s (`80.8` tok/s) |
+| `torchtpu-omni-eager` | `FP8_DYNAMIC` | `TP=4 × DP=4` | `4,096` | `1` | **`0.098`** | `372.69` | **`18.42`** | `124.0` | **`0.0122`** | **`167,611.2`** | **`434.4`** audio-s/s (`10.7` tok/s) |
+| `torchtpu-omni-eager` | `FP8_DYNAMIC` | `TP=4 × DP=4` | `4,096` | `4` | **`0.258`** | `49.60` | **`17.40`** | `283.6` | **`0.0122`** | **`253,584.8`** | **`1,839.5`** audio-s/s (`322.6` tok/s) |
+| `torchtpu-omni-eager` | `FP8_DYNAMIC` | `TP=4 × DP=4` | `16,384` | `1` | **`0.401`** | `63.97` | **`20.49`** | `451.6` | **`0.0129`** | **`163,228.8`** | **`390.4`** audio-s/s (`62.5` tok/s) |
+| `torchtpu-omni-eager` | `FP8_DYNAMIC` | `TP=4 × DP=4` | `16,384` | `2` | **`0.731`** | `65.25` | **`20.70`** | `781.3` | **`0.0134`** | **`179,347.2`** | **`773.1`** audio-s/s (`122.6` tok/s) |
+| `torchtpu-omni-eager` | `FP8_DYNAMIC` | `TP=4 × DP=4` | `65,536` | `1` | **`3.239`** | `56.51` | **`23.25`** | `3,291.6` | **`0.0143`** | **`80,938.4`** | **`344.1`** audio-s/s (`70.8` tok/s) |
+| `torchtpu-omni-eager` | `FP8_DYNAMIC` | `TP=4 × DP=4` | `65,536` | `2` | **`6.467`** | `55.18` | **`17.82`** | `6,514.8` | **`0.0120`** | **`81,068.0`** | **`897.8`** audio-s/s (`145.0` tok/s) |
+| `torchtpu-omni-eager` | `FP8_DYNAMIC` | `TP=4 × DP=4` | `131,072` | `1` | **`11.126`** | `70.58` | **`26.09`** | `11,181.8` | **`0.0157`** | **`47,122.4`** | **`306.6`** audio-s/s (`56.7` tok/s) |
+| `torchtpu-omni-compiled` | `FP8_DYNAMIC` | `TP=4 × DP=4` | `4,096` | `1` | **`2.645`** | `1,553.97` | **`578.81`** | `3,231.9` | **`0.2924`** | **`6,193.6`** | **`13.8`** audio-s/s (`2.6` tok/s) |
+| `torchtpu-omni-compiled` | `FP8_DYNAMIC` | `TP=4 × DP=4` | `4,096` | `4` | **`2.795`** | `855.08` | **`589.39`** | `3,391.7` | **`0.2982`** | **`23,451.6`** | **`54.3`** audio-s/s (`18.7` tok/s) |
+| `torchtpu-omni-compiled` | `FP8_DYNAMIC` | `TP=4 × DP=4` | `16,384` | `1` | **`4.659`** | `1,550.35` | **`3.64`** | `4,692.4` | **`0.0045`** | **`14,066.0`** | **`2,200.7`** audio-s/s (`2.6` tok/s) |
+| `torchtpu-omni-compiled` | `FP8_DYNAMIC` | `TP=4 × DP=4` | `16,384` | `2` | **`3.452`** | `68.39` | **`547.21`** | `4,028.9` | **`0.2767`** | **`37,970.8`** | **`29.2`** audio-s/s (`117.0` tok/s) |
+| `torchtpu-omni-compiled` | `FP8_DYNAMIC` | `TP=4 × DP=4` | `65,536` | `1` | **`5.387`** | `67.44` | **`3.62`** | `5,420.6` | **`0.0045`** | **`48,658.4`** | **`2,211.8`** audio-s/s (`59.3` tok/s) |
+| `torchtpu-omni-compiled` | `FP8_DYNAMIC` | `TP=4 × DP=4` | `65,536` | `2` | **`8.123`** | `71.62` | **`3.58`** | `8,156.0` | **`0.0049`** | **`64,546.4`** | **`4,468.3`** audio-s/s (`111.7` tok/s) |
+| `torchtpu-omni-compiled` | `FP8_DYNAMIC` | `TP=4 × DP=4` | `131,072` | `1` | **`11.122`** | `69.05` | **`3.63`** | `11,155.4` | **`0.0045`** | **`47,138.8`** | **`2,205.0`** audio-s/s (`57.9` tok/s) |
 
 #### Stage 2 — Audio WAV Framing & Multi-Frame `720p` Vision Preprocessing CPU Offload Ablation
 

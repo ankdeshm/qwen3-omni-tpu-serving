@@ -250,6 +250,7 @@ def preprocess_vision_batch(
 
 class MultimodalOffloadHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    disable_nagle_algorithm = True
 
     def log_message(self, fmt: str, *args: Any) -> None:
         return
