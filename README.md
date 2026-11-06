@@ -171,6 +171,49 @@ Every table below is generated directly from the verified `PASS` records in [`re
 | `vision_preproc_640x480_to_256x256` | `4` | `14.290` | `8.690` | `6.990` | **`1.64x`** | Offload to AVX-512 CPU Pool |
 | `vision_preproc_1280x720_to_448x448` | `8` | `85.570` | `41.910` | `30.240` | **`2.04x`** | Offload to AVX-512 CPU Pool |
 
+### Slice `v7x-spot-4c` (`v7x`, `4` Chips / `8` TensorCores, `17` Verified Benchmark Points)
+
+- **Raw Artifacts:** [`results/v7x-spot-4c/SUMMARY.md`](./results/v7x-spot-4c/SUMMARY.md) · [`results/v7x-spot-4c/summary.json`](./results/v7x-spot-4c/summary.json) *(updated `2026-11-06T12:34:20.783549+00:00`)*
+
+#### Stage 1A — End-to-End `vllm-torchtpu-ep` HTTP Serving (`BF16`, `TP=4 × DP=2` & `TP=2 × DP=4`)
+
+| Engine | Precision | `TP × Cluster DP` | Context | Concurrency | TTFT p50 (s) | TPOT p50 (ms) | E2E p50 (s) | Cluster Prefill (tok/s) | Cluster Output (tok/s) |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|
+| `vllm-torchtpu-ep` | `BF16` | `TP=4 × DP=2` | `4,096` | `1` | **`0.342`** | **`18.58`** | `2.540` | **`11,981.2`** | **`50.4`** |
+| `vllm-torchtpu-ep` | `BF16` | `TP=4 × DP=2` | `4,096` | `4` | **`0.056`** | **`7.46`** | `0.991` | **`290,592.0`** | **`516.6`** |
+| `vllm-torchtpu-ep` | `BF16` | `TP=4 × DP=2` | `4,096` | `8` | **`0.506`** | **`9.43`** | `1.456` | **`64,786.2`** | **`703.2`** |
+| `vllm-torchtpu-ep` | `BF16` | `TP=4 × DP=2` | `16,384` | `1` | **`0.711`** | **`17.48`** | `2.646` | **`23,045.2`** | **`48.4`** |
+| `vllm-torchtpu-ep` | `BF16` | `TP=4 × DP=2` | `16,384` | `4` | **`0.209`** | **`7.98`** | `1.134` | **`313,470.9`** | **`451.6`** |
+| `vllm-torchtpu-ep` | `BF16` | `TP=2 × DP=4` | `4,096` | `1` | **`0.347`** | **`15.71`** | `2.177` | **`11,791.3`** | **`58.8`** |
+| `vllm-torchtpu-ep` | `BF16` | `TP=2 × DP=4` | `4,096` | `4` | **`0.661`** | **`16.40`** | `2.427` | **`24,769.0`** | **`210.9`** |
+| `vllm-torchtpu-ep` | `BF16` | `TP=2 × DP=4` | `4,096` | `8` | **`0.465`** | **`15.65`** | `2.243` | **`70,397.6`** | **`456.6`** |
+| `vllm-torchtpu-ep` | `BF16` | `TP=2 × DP=4` | `16,384` | `1` | **`0.920`** | **`14.74`** | `2.337` | **`17,815.3`** | **`54.8`** |
+| `vllm-torchtpu-ep` | `BF16` | `TP=2 × DP=4` | `16,384` | `4` | **`0.567`** | **`16.14`** | `4.183` | **`115,684.6`** | **`189.0`** |
+
+#### Stage 1B — `torchtpu-omni-eager` `FP8_DYNAMIC` (`Thinker` `4K`–`128K` + `Talker` `16`-RVQ + `Code2Wav`)
+
+| Engine | Precision | `TP × Cluster DP` | Context | Batch | TTFT (s) | TPOT (ms) | `2s` Speech Chunk (ms) | First Audio (ms) | Speech RTF | Cluster Prefill (tok/s) | Cluster Output Rate |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `torchtpu-omni-eager` | `FP8_DYNAMIC` | `TP=4 × DP=2` | `4,096` | `1` | **`1.488`** | `1,141.56` | **`251.35`** | `1,746.4` | **`0.1260`** | **`5,506.8`** | **`15.9`** audio-s/s (`1.8` tok/s) |
+| `torchtpu-omni-eager` | `FP8_DYNAMIC` | `TP=4 × DP=2` | `4,096` | `4` | **`1.449`** | `1,046.52` | **`285.33`** | `1,741.6` | **`0.1432`** | **`22,621.8`** | **`56.1`** audio-s/s (`7.6` tok/s) |
+| `torchtpu-omni-eager` | `FP8_DYNAMIC` | `TP=4 × DP=2` | `16,384` | `1` | **`0.360`** | `1,498.45` | **`37.65`** | `414.4` | **`0.0192`** | **`90,945.4`** | **`106.2`** audio-s/s (`1.3` tok/s) |
+| `torchtpu-omni-eager` | `FP8_DYNAMIC` | `TP=4 × DP=2` | `16,384` | `2` | **`0.405`** | `1,537.37` | **`49.51`** | `471.2` | **`0.0252`** | **`161,762.6`** | **`161.6`** audio-s/s (`2.6` tok/s) |
+| `torchtpu-omni-eager` | `FP8_DYNAMIC` | `TP=4 × DP=2` | `65,536` | `1` | **`0.531`** | `63.98` | **`17.54`** | `565.3` | **`0.0091`** | **`246,684.2`** | **`228.0`** audio-s/s (`31.3` tok/s) |
+| `torchtpu-omni-eager` | `FP8_DYNAMIC` | `TP=4 × DP=2` | `65,536` | `2` | **`0.701`** | `5,933.95` | **`70.91`** | `788.9` | **`0.0359`** | **`373,729.6`** | **`112.8`** audio-s/s (`0.7` tok/s) |
+| `torchtpu-omni-eager` | `FP8_DYNAMIC` | `TP=4 × DP=2` | `131,072` | `1` | **`0.572`** | `50.17` | **`15.27`** | `603.4` | **`0.0080`** | **`458,554.2`** | **`262.0`** audio-s/s (`39.9` tok/s) |
+
+#### Stage 2 — Audio WAV Framing & Multi-Frame `720p` Vision Preprocessing CPU Offload Ablation (`v7x-spot-4c`)
+
+| Offload Stage | Batch / Frames | On-Host CPU (ms) | Disagg CPU RTT (ms) | Remote Server Compute (ms) | Measured Speedup | Optimal Routing Policy |
+|---|---:|---:|---:|---:|---:|---|
+| `audio_wav_24khz_2s` | `1` | `0.068` | `0.513` | `0.084` | **`0.13x`** | Keep In-Memory on Host (<0.3 ms) |
+| `audio_wav_24khz_2s` | `2` | `0.071` | `0.574` | `0.114` | **`0.12x`** | Keep In-Memory on Host (<0.3 ms) |
+| `audio_wav_24khz_2s` | `4` | `0.139` | `0.818` | `0.218` | **`0.17x`** | Keep In-Memory on Host (<0.3 ms) |
+| `audio_wav_24khz_2s` | `8` | `0.379` | `1.208` | `0.468` | **`0.31x`** | Keep In-Memory on Host (<0.4 ms) |
+| `vision_preproc_640x480_to_256x256` | `2` | `5.160` | `6.340` | `5.340` | **`0.81x`** | Keep In-Memory on `v7x` Host (<256 KB) |
+| `vision_preproc_640x480_to_256x256` | `4` | `10.510` | `9.090` | `7.070` | **`1.16x`** | Offload to AVX-512 CPU Pool |
+| `vision_preproc_1280x720_to_448x448` | `8` | `61.320` | `42.630` | `31.390` | **`1.44x`** | Offload to AVX-512 CPU Pool |
+
 ---
 
 ## 6. Repository Layout & Reproduction

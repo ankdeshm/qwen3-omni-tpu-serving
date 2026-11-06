@@ -48,6 +48,14 @@ spec:
           value: "TPU"
         - name: MULTIMODAL_CPU_OFFLOAD_URL
           value: "http://multimodal-cpu-offload-svc.default.svc.cluster.local:8090"
+        - name: XDG_CACHE_HOME
+          value: "/dev/shm/root_cache"
+        - name: VLLM_CACHE_ROOT
+          value: "/dev/shm/root_cache/vllm"
+        - name: TORCHINDUCTOR_CACHE_DIR
+          value: "/dev/shm/torchinductor"
+        - name: TMPDIR
+          value: "/dev/shm/tmp"
         - name: HF_TOKEN
           valueFrom:
             secretKeyRef:
@@ -62,7 +70,8 @@ spec:
           ulimit -c 0 || true
           mount -o remount,size=850G /dev/shm || true
           rm -rf /dev/shm/GR00T* /dev/shm/Qwen* /dev/shm/Cosmos* /dev/shm/Hunyuan* /dev/shm/LTX* /dev/shm/Wan* /dev/shm/hf_cache /workspace/core* || true
-          mkdir -p /tmp/omni_bench
+          mkdir -p /dev/shm/root_cache /dev/shm/torchinductor /dev/shm/tmp /tmp/omni_bench
+          rm -rf /root/.cache && ln -sfn /dev/shm/root_cache /root/.cache
           TOK=$(curl -sS -H "Metadata-Flavor: Google" "http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token" | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
           for f in gcs_stager.py tpu_single_host_setup.py cpu_offload_client.py run_gr00t_vla_tpu_bench.py run_qwen_image_tpu_bench.py run_qwen3_omni_tpu_bench.py run_cosmos3_super_tpu_bench.py run_hunyuan_image3_tpu_bench.py; do
             curl -fsSL -H "Authorization: Bearer ${TOK}" \
