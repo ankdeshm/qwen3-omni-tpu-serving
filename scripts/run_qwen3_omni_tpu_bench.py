@@ -321,7 +321,7 @@ def run_vllm_qwen3_omni_http_sweep(
 
     ready = False
     t0 = time.time()
-    wait_budget_s = 360 if use_omni_flag else 600
+    wait_budget_s = 600 if use_omni_flag else 1800
     while time.time() - t0 < wait_budget_s:
         if proc.poll() is not None:
             break
