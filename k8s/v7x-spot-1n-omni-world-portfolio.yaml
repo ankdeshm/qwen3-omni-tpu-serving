@@ -10,7 +10,7 @@ spec:
   completions: 1
   parallelism: 1
   completionMode: Indexed
-  backoffLimit: 12
+  backoffLimit: 24
   template:
     metadata:
       annotations:
@@ -87,81 +87,119 @@ spec:
           mkdir -p /dev/shm/tmp /dev/shm/hf_cache /dev/shm/torchinductor /tmp/omni_bench
           df -h /dev/shm
 
-          BUCKET="YOUR_GCS_BUCKET"
-          TOK=$(curl -sS -H "Metadata-Flavor: Google" \
-            "http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token" \
-            | python3 -c "import sys, json; print(json.load(sys.stdin)['access_token'])")
+          export BUCKET="YOUR_GCS_BUCKET"
+          export GCS_PREFIX="omni-world-portfolio/results/v7x-spot-4c"
+
+          cat > /tmp/omni_bench/gcs_ckpt.py << 'PYEOF'
+          import json, os, pathlib, sys, urllib.parse, urllib.request
+
+          def token() -> str:
+              req = urllib.request.Request(
+                  "http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token",
+                  headers={"Metadata-Flavor": "Google"},
+              )
+              with urllib.request.urlopen(req, timeout=15) as r:
+                  return json.loads(r.read().decode())["access_token"]
+
+          def put_obj(bucket: str, obj_name: str, data: bytes) -> None:
+              tok = token()
+              q = urllib.parse.quote(obj_name, safe="")
+              url = f"https://storage.googleapis.com/upload/storage/v1/b/{bucket}/o?uploadType=media&name={q}"
+              req = urllib.request.Request(
+                  url,
+                  data=data,
+                  method="POST",
+                  headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/octet-stream"},
+              )
+              with urllib.request.urlopen(req, timeout=120) as r:
+                  _ = r.read()
+
+          def exists_obj(bucket: str, obj_name: str) -> bool:
+              tok = token()
+              q = urllib.parse.quote(obj_name, safe="")
+              url = f"https://storage.googleapis.com/storage/v1/b/{bucket}/o/{q}"
+              req = urllib.request.Request(url, headers={"Authorization": f"Bearer {tok}"})
+              try:
+                  with urllib.request.urlopen(req, timeout=20) as r:
+                      return r.status == 200
+              except Exception:
+                  return False
+
+          cmd, suite = sys.argv[1], sys.argv[2]
+          bucket = os.environ["BUCKET"]
+          prefix = f"{os.environ['GCS_PREFIX']}/{suite}"
+          if cmd == "check":
+              sys.exit(0 if exists_obj(bucket, f"{prefix}/DONE") else 1)
+          elif cmd == "sync":
+              local_dir = pathlib.Path(sys.argv[3])
+              files = [p for p in sorted(local_dir.rglob("*")) if p.is_file()]
+              if not files:
+                  print(f"[gcs_ckpt] no output files in {local_dir}; skipping DONE marker", flush=True)
+                  sys.exit(1)
+              for fp in files:
+                  rel = fp.relative_to(local_dir).as_posix()
+                  put_obj(bucket, f"{prefix}/{rel}", fp.read_bytes())
+              put_obj(bucket, f"{prefix}/DONE", json.dumps({"files": len(files)}).encode())
+              print(f"[gcs_ckpt] synced {len(files)} files -> gs://{bucket}/{prefix}/", flush=True)
+          PYEOF
+
+          TOK=$(python3 -c "import sys; sys.path.insert(0,'/tmp/omni_bench'); import urllib.request,json; r=urllib.request.urlopen(urllib.request.Request('http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token',headers={'Metadata-Flavor':'Google'})); print(json.loads(r.read())['access_token'])")
 
           for SCRIPT in \
             gcs_stager.py \
             tpu_single_host_setup.py \
             cpu_offload_client.py \
-            run_gr00t_vla_tpu_bench.py \
-            run_qwen_image_tpu_bench.py \
             run_qwen3_omni_tpu_bench.py \
             run_cosmos3_super_tpu_bench.py \
-            run_hunyuan_image3_tpu_bench.py; do
+            run_hunyuan_image3_tpu_bench.py \
+            run_qwen_image_tpu_bench.py; do
             curl -fsSL --retry 4 --retry-delay 2 \
               -H "Authorization: Bearer ${TOK}" \
               "https://storage.googleapis.com/storage/v1/b/${BUCKET}/o/omni-world-portfolio%2Fscripts%2F${SCRIPT}?alt=media" \
               -o "/tmp/omni_bench/${SCRIPT}"
           done
 
-          echo "[v7x-spot-1n] 1/5 Running GR00T-N1.7-3B VLA on TPU v7x-4 (8 TensorCores)..."
-          python3 -u /tmp/omni_bench/run_gr00t_vla_tpu_bench.py \
-            --chip-type=v7x \
-            --slice-name=v7x-spot-4c \
-            --num-hosts=1 \
-            --cores-per-host=8 \
-            --bucket="${BUCKET}" \
-            --use-shm \
-            --output-dir=/tmp/omni_bench/results/gr00t-n1-7-3b || echo "[WARN] GR00T v7x exited non-zero"
-          rm -rf /dev/shm/GR00T* /dev/shm/_hf_stage_tmp || true
+          run_suite() {
+            local IDX="$1"
+            local SUITE="$2"
+            local SCRIPT="$3"
+            local SHM_GLOB="$4"
+            local OUT_DIR="/tmp/omni_bench/results/${SUITE}"
+            if python3 /tmp/omni_bench/gcs_ckpt.py check "${SUITE}"; then
+              echo "[v7x-spot-1n] [${IDX}/4] ${SUITE} already checkpointed in gs://${BUCKET}/${GCS_PREFIX}/${SUITE}/DONE — skipping."
+              return 0
+            fi
+            mkdir -p "${OUT_DIR}"
+            echo "[v7x-spot-1n] [${IDX}/4] Running ${SUITE} (${SCRIPT}) on TPU v7x-4 (8 TensorCores)..."
+            if python3 -u "/tmp/omni_bench/${SCRIPT}" \
+              --chip-type=v7x \
+              --slice-name=v7x-spot-4c \
+              --num-hosts=1 \
+              --cores-per-host=8 \
+              --bucket="${BUCKET}" \
+              --use-shm \
+              --output-dir="${OUT_DIR}" > "${OUT_DIR}/stdout.log" 2>&1; then
+              tail -n 25 "${OUT_DIR}/stdout.log" || true
+              python3 /tmp/omni_bench/gcs_ckpt.py sync "${SUITE}" "${OUT_DIR}" || echo "[WARN] GCS sync failed for ${SUITE}"
+            else
+              echo "[WARN] ${SUITE} exited non-zero; syncing partial diagnostics without DONE marker"
+              tail -n 40 "${OUT_DIR}/stdout.log" || true
+              python3 -c "
+          import pathlib, subprocess
+          out = pathlib.Path('${OUT_DIR}')
+          if any(p.suffix in ('.json', '.csv') for p in out.rglob('*') if p.is_file()):
+              subprocess.run(['python3', '/tmp/omni_bench/gcs_ckpt.py', 'sync', '${SUITE}', '${OUT_DIR}'], check=False)
+          " || true
+            fi
+            rm -rf /dev/shm/${SHM_GLOB} /dev/shm/_hf_stage_tmp 2>/dev/null || true
+          }
 
-          echo "[v7x-spot-1n] 2/5 Running Qwen-Image + Qwen-Image-2.1 (Qwen3-VL) on TPU v7x-4 (8 TensorCores)..."
-          python3 -u /tmp/omni_bench/run_qwen_image_tpu_bench.py \
-            --chip-type=v7x \
-            --slice-name=v7x-spot-4c \
-            --num-hosts=1 \
-            --cores-per-host=8 \
-            --bucket="${BUCKET}" \
-            --use-shm \
-            --output-dir=/tmp/omni_bench/results/qwen-image || echo "[WARN] Qwen-Image v7x exited non-zero"
-          rm -rf /dev/shm/Qwen* /dev/shm/_hf_stage_tmp || true
+          run_suite 1 "qwen3-omni"      "run_qwen3_omni_tpu_bench.py"      "Qwen*"
+          run_suite 2 "cosmos3-super"   "run_cosmos3_super_tpu_bench.py"   "Cosmos*"
+          run_suite 3 "hunyuan-image-3" "run_hunyuan_image3_tpu_bench.py"  "Hunyuan*"
+          run_suite 4 "qwen-image"      "run_qwen_image_tpu_bench.py"      "Qwen*"
 
-          echo "[v7x-spot-1n] 3/5 Running Qwen3-Omni-30B-A3B-Instruct on TPU v7x-4 (8 TensorCores)..."
-          python3 -u /tmp/omni_bench/run_qwen3_omni_tpu_bench.py \
-            --chip-type=v7x \
-            --slice-name=v7x-spot-4c \
-            --num-hosts=1 \
-            --cores-per-host=8 \
-            --bucket="${BUCKET}" \
-            --use-shm \
-            --output-dir=/tmp/omni_bench/results/qwen3-omni || echo "[WARN] Qwen3-Omni v7x exited non-zero"
-          rm -rf /dev/shm/Qwen* /dev/shm/_hf_stage_tmp || true
-
-          echo "[v7x-spot-1n] 4/5 Running Cosmos3-Super World Model on TPU v7x-4 (8 TensorCores)..."
-          python3 -u /tmp/omni_bench/run_cosmos3_super_tpu_bench.py \
-            --chip-type=v7x \
-            --slice-name=v7x-spot-4c \
-            --num-hosts=1 \
-            --cores-per-host=8 \
-            --bucket="${BUCKET}" \
-            --use-shm \
-            --output-dir=/tmp/omni_bench/results/cosmos3-super || echo "[WARN] Cosmos3 v7x exited non-zero"
-          rm -rf /dev/shm/Cosmos* /dev/shm/_hf_stage_tmp || true
-
-          echo "[v7x-spot-1n] 5/5 Running HunyuanImage-3.0 83B MoE on TPU v7x-4 (8 TensorCores)..."
-          python3 -u /tmp/omni_bench/run_hunyuan_image3_tpu_bench.py \
-            --chip-type=v7x \
-            --slice-name=v7x-spot-4c \
-            --num-hosts=1 \
-            --cores-per-host=8 \
-            --bucket="${BUCKET}" \
-            --use-shm \
-            --output-dir=/tmp/omni_bench/results/hunyuan-image-3 || echo "[WARN] HunyuanImage3 v7x exited non-zero"
-
-          echo "[v7x-spot-1n] Completed all 5 portfolio suites on TPU v7x-4 (8 TensorCores)."
+          echo "[v7x-spot-1n] Completed all 4 checkpointed portfolio suites on TPU v7x-4 (8 TensorCores)."
       volumes:
       - name: dshm
         emptyDir:
