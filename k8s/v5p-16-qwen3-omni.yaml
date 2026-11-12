@@ -1,0 +1,65 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: qwen3-omni-v5p-16
+  namespace: default
+spec:
+  completions: 4
+  parallelism: 4
+  completionMode: Indexed
+  backoffLimit: 4
+  template:
+    metadata:
+      labels:
+        app: qwen3-omni-v5p-16
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      restartPolicy: OnFailure
+      nodeSelector:
+        cloud.google.com/gke-nodepool: YOUR_TPU_V5P_NODEPOOL
+        cloud.google.com/gke-tpu-accelerator: tpu-v5p-slice
+        cloud.google.com/gke-tpu-topology: 2x2x4
+      tolerations:
+      - key: google.com/tpu
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: omni-bench
+        image: us-central1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/vllm/vllm-torchtpu-omni:v0.32.0
+        securityContext:
+          privileged: true
+        env:
+        - name: MULTIMODAL_CPU_OFFLOAD_URL
+          value: "http://multimodal-cpu-offload-svc.default.svc.cluster.local:8090"
+        - name: HF_HOME
+          value: "/dev/shm/hf_cache"
+        - name: TMPDIR
+          value: "/dev/shm/tmp"
+        - name: TORCHINDUCTOR_CACHE_DIR
+          value: "/dev/shm/torchinductor"
+        command:
+        - bash
+        - -lc
+        - |
+          set -euo pipefail
+          mount -o remount,size=380G /dev/shm || true
+          exec python3 -u /workspace/scripts/run_qwen3_omni_tpu_bench.py \
+            --chip-type=v5p \
+            --slice-name=v5p-16-keepalive \
+            --num-hosts=4 \
+            --cores-per-host=4 \
+            --use-shm
+        resources:
+          requests:
+            google.com/tpu: "4"
+            memory: "350Gi"
+          limits:
+            google.com/tpu: "4"
+        volumeMounts:
+        - name: dshm
+          mountPath: /dev/shm
+      volumes:
+      - name: dshm
+        emptyDir:
+          medium: Memory

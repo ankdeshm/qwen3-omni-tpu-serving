@@ -1,0 +1,67 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: qwen3-omni-v7x-8
+  namespace: default
+spec:
+  completions: 2
+  parallelism: 2
+  completionMode: Indexed
+  backoffLimit: 4
+  template:
+    metadata:
+      labels:
+        app: qwen3-omni-v7x-8
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      restartPolicy: OnFailure
+      nodeSelector:
+        cloud.google.com/gke-nodepool: YOUR_TPU_V7X_NODEPOOL
+        cloud.google.com/gke-tpu-accelerator: tpu7x
+        cloud.google.com/gke-tpu-topology: 2x2x2
+      tolerations:
+      - key: google.com/tpu
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: omni-bench
+        image: us-central1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/vllm/vllm-torchtpu-omni:v0.32.0
+        securityContext:
+          privileged: true
+        env:
+        - name: PJRT_DEVICE
+          value: "TPU"
+        - name: MULTIMODAL_CPU_OFFLOAD_URL
+          value: "http://multimodal-cpu-offload-svc.default.svc.cluster.local:8090"
+        - name: HF_HOME
+          value: "/dev/shm/hf_cache"
+        - name: TMPDIR
+          value: "/dev/shm/tmp"
+        - name: TORCHINDUCTOR_CACHE_DIR
+          value: "/dev/shm/torchinductor"
+        command:
+        - bash
+        - -lc
+        - |
+          set -euo pipefail
+          mount -o remount,size=850G /dev/shm || true
+          exec python3 -u /workspace/scripts/run_qwen3_omni_tpu_bench.py \
+            --chip-type=v7x \
+            --slice-name=v7x-8 \
+            --num-hosts=2 \
+            --cores-per-host=8 \
+            --use-shm
+        resources:
+          requests:
+            google.com/tpu: "4"
+            memory: "700Gi"
+          limits:
+            google.com/tpu: "4"
+        volumeMounts:
+        - name: dshm
+          mountPath: /dev/shm
+      volumes:
+      - name: dshm
+        emptyDir:
+          medium: Memory
